@@ -14,14 +14,14 @@ import Rink from "./Rink";
 // three.js is only loaded when someone opens the 3D view
 const View3D = dynamic(() => import("./View3D"), { ssr: false });
 
-type Tool = "move" | "run" | "drib" | "pass" | "dir" | "see" | "erase";
+type Tool = "move" | "run" | "drib" | "pass" | "dir" | "erase";
+type Mode = "play" | "edit";
 const TOOLS: { id: Tool; label: string; hint: string }[] = [
   { id: "move", label: "Flytta", hint: "Dra spelare eller boll. Släpp bollen vid en spelare så får hen den." },
   { id: "run", label: "Åkning", hint: "Dra från en spelare dit hen ska åka." },
   { id: "drib", label: "Driver", hint: "Dra från bollhållaren dit hen driver bollen." },
   { id: "pass", label: "Pass", hint: "Dra från bollen till mottagaren." },
   { id: "dir", label: "Riktning", hint: "Dra från en spelare åt det håll hen ska titta." },
-  { id: "see", label: "Syn", hint: "Tryck på en spelare för att se hans synfält. Se i 3D ställer dig i hans skor." },
   { id: "erase", label: "Sudda", hint: "Tryck på en pil eller en motståndare för att ta bort den." },
 ];
 const REACH = 3.2; // metres: generous for fingers
@@ -46,6 +46,9 @@ export default function Editor({ initial }: { initial: Play }) {
   const [save, setSave] = useState<Save>("saved");
   const [portrait, setPortrait] = useState(false);
   const [viewer, setViewer] = useState<string | null>(null);
+  // finished plays open for watching; a fresh one opens for drawing
+  const [mode, setMode] = useState<Mode>(initial.steps.length > 1 ? "play" : "edit");
+  const lastTap = useRef<{ id: string; at: number } | null>(null);
   const [show3d, setShow3d] = useState(false);
 
   const svgRef = useRef<SVGSVGElement>(null);
@@ -167,7 +170,21 @@ export default function Editor({ initial }: { initial: Play }) {
   };
 
   const onDown = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (playing || e.button > 0) return;
+    if (e.button > 0) return;
+    if (mode === "play") {
+      // tap: show his field of view; tap again quickly: stand in his skates (3D)
+      const id = nearestPiece(visible, frame.pos, toWorld(e), REACH);
+      const now = e.timeStamp;
+      if (id && lastTap.current?.id === id && now - lastTap.current.at < 400) {
+        lastTap.current = null;
+        open3d();
+        return;
+      }
+      lastTap.current = id ? { id, at: now } : null;
+      setViewer(id);
+      return;
+    }
+    if (playing) return;
     const p = toWorld(e);
     const pos = step.pos;
     const ball = ballPoint(step.ball, pos);
@@ -188,9 +205,6 @@ export default function Editor({ initial }: { initial: Play }) {
     } else if (tool === "dir") {
       const id = nearestPiece(visible, pos, p, REACH);
       if (id) d = { kind: "dir", id };
-    } else if (tool === "see") {
-      setViewer(nearestPiece(visible, pos, p, REACH) ?? viewer);
-      return;
     } else if (tool === "erase") {
       erase(p);
       return;
@@ -333,9 +347,23 @@ export default function Editor({ initial }: { initial: Play }) {
     return () => removeEventListener("keydown", onKey);
   }, [undo]);
 
+  function open3d() {
+    if (anim) setK(anim.from);
+    stop();
+    setShow3d(true);
+  }
+  const switchMode = (m: Mode) => {
+    stop();
+    setDraft(null);
+    dragRef.current = null;
+    setMode(m);
+  };
+
   /* ---------- render ---------- */
   const lbl = portrait ? "rotate(90)" : undefined;
-  const hint = TOOLS.find(t => t.id === tool)!.hint;
+  const hint = mode === "play"
+    ? "Tryck på en spelare för att se hans synfält. Dubbeltryck eller Se i 3D för att stå i hans skor."
+    : TOOLS.find(t => t.id === tool)!.hint;
   const holder = shownStep.ball.holder ? pieceById[shownStep.ball.holder] : null;
   const saveText = { saved: "Sparat", saving: "Sparar…", dirty: "Ändrat", error: "Kunde inte spara" }[save];
 
@@ -344,21 +372,31 @@ export default function Editor({ initial }: { initial: Play }) {
       <header className="top">
         <div className="title">
           <Link className="back" href="/">← Mina spel</Link>
-          <input className="name" value={name} onChange={e => setName(e.target.value)} aria-label="Spelets namn" maxLength={80} />
+          <input className="name" value={name} onChange={e => setName(e.target.value)} aria-label="Spelets namn" maxLength={80} readOnly={mode === "play"} />
         </div>
         <div className="bar">
-          <span className={"save " + save} role="status">{saveText}</span>
-          <button className="btn ghost" type="button" onClick={undo} disabled={!past.length || playing}>Ångra</button>
+          <div className="modes" role="group" aria-label="Läge">
+            <button type="button" aria-pressed={mode === "play"} onClick={() => switchMode("play")}>Spela</button>
+            <button type="button" aria-pressed={mode === "edit"} onClick={() => switchMode("edit")}>Redigera</button>
+          </div>
+          {mode === "edit" && <>
+            <span className={"save " + save} role="status">{saveText}</span>
+            <button className="btn ghost" type="button" onClick={undo} disabled={!past.length || playing}>Ångra</button>
+          </>}
         </div>
       </header>
 
-      <nav className="tools" aria-label="Verktyg">
-        {TOOLS.map(t => (
-          <button key={t.id} type="button" aria-pressed={tool === t.id} className={"tool tool-" + t.id} onClick={() => setTool(t.id)} disabled={playing}>
-            {t.label}
-          </button>
-        ))}
-      </nav>
+      {mode === "edit" ? (
+        <nav className="tools" aria-label="Verktyg">
+          {TOOLS.map(t => (
+            <button key={t.id} type="button" aria-pressed={tool === t.id} className={"tool tool-" + t.id} onClick={() => setTool(t.id)} disabled={playing}>
+              {t.label}
+            </button>
+          ))}
+        </nav>
+      ) : (
+        <p className="hint play-hint">{hint}</p>
+      )}
 
       <figure className="rink">
         <svg
@@ -383,7 +421,7 @@ export default function Editor({ initial }: { initial: Play }) {
           <g ref={worldRef} transform={portrait ? `matrix(0 -1 1 0 0 ${L})` : undefined}>
             <Rink portrait={portrait} />
 
-            {tool === "see" && viewer && frame.pos[viewer] && (() => {
+            {mode === "play" && viewer && frame.pos[viewer] && (() => {
               // what he sees: clear in front (±55°), out of the corner of the eye (±100°)
               const p = frame.pos[viewer];
               const wedge = (half: number) => {
@@ -426,7 +464,7 @@ export default function Editor({ initial }: { initial: Play }) {
                 return (
                   <g key={pc.id} transform={`translate(${p.x.toFixed(2)} ${p.y.toFixed(2)})`}>
                     <path className={"nose nose-" + pc.side} d="M1.15 -0.75 L2.05 0 L1.15 0.75 Z" transform={`rotate(${p.dir.toFixed(1)})`} />
-                    <circle className={(pc.side === "us" ? "p-us" : "p-them") + (key ? " key" : "") + (tool === "see" && viewer === pc.id ? " viewer" : "")} r={pc.side === "us" ? 1.4 : 1.2} />
+                    <circle className={(pc.side === "us" ? "p-us" : "p-them") + (key ? " key" : "") + (mode === "play" && viewer === pc.id ? " viewer" : "")} r={pc.side === "us" ? 1.4 : 1.2} />
                     {pc.label && <text className="p-lbl" y={0.05} transform={lbl} style={pc.label.length > 1 ? { fontSize: "1px" } : undefined}>{pc.label}</text>}
                   </g>
                 );
@@ -438,10 +476,12 @@ export default function Editor({ initial }: { initial: Play }) {
       </figure>
 
       <div className="foot">
-        <p className="hint">{playing ? "Spelar…" : hint}</p>
+        {mode === "edit" && <p className="hint">{playing ? "Spelar…" : hint}</p>}
         <div className="stepline">
           <span className="count">{(anim ? anim.from : k) + 1}/{steps.length}</span>
-          <input
+          {mode === "play" ? (
+            <p className="step-text">{shownStep.text}</p>
+          ) : <input
             className="step-text"
             placeholder={next ? "Beskriv vad som händer i steget" : "Rita en pil för att skapa nästa steg"}
             value={shownStep.text}
@@ -449,7 +489,7 @@ export default function Editor({ initial }: { initial: Play }) {
             onChange={e => setSteps(s => s.map((x, i) => (i === k ? { ...x, text: e.target.value.slice(0, 140) } : x)))}
             disabled={playing}
             aria-label="Beskrivning av steget"
-          />
+          />}
         </div>
         <div className="bar">
           <button className="btn ghost" type="button" onClick={() => { stop(); setK(Math.max(0, k - 1)); }} disabled={k === 0 && !playing} aria-label="Föregående steg">←</button>
@@ -467,12 +507,14 @@ export default function Editor({ initial }: { initial: Play }) {
           <button className="btn ghost" type="button" onClick={() => play(0, true)} disabled={playing || steps.length < 2}>Spela allt</button>
         </div>
         <div className="bar small">
-          <button className="tg" type="button" onClick={addStep} disabled={playing}>+ Steg</button>
-          <button className="tg" type="button" onClick={removeStep} disabled={playing || steps.length < 2}>Ta bort steg</button>
-          <button className="tg" type="button" onClick={addOpponent} disabled={playing}>+ Motståndare</button>
+          {mode === "edit" && <>
+            <button className="tg" type="button" onClick={addStep} disabled={playing}>+ Steg</button>
+            <button className="tg" type="button" onClick={removeStep} disabled={playing || steps.length < 2}>Ta bort steg</button>
+            <button className="tg" type="button" onClick={addOpponent} disabled={playing}>+ Motståndare</button>
+          </>}
           <button className="tg" type="button" aria-pressed={showThem} onClick={() => setShowThem(v => !v)}>Visa motståndare</button>
-          {tool === "see" && viewer && (
-            <button className="btn" type="button" onClick={() => { stop(); setShow3d(true); }}>Se i 3D</button>
+          {mode === "play" && viewer && pieceById[viewer] && (
+            <button className="btn" type="button" onClick={open3d}>Se i 3D</button>
           )}
           {holder && <span className="holder">Bollen: {holder.label ? NAMES[holder.label] ?? holder.label : "motståndare"}</span>}
         </div>
