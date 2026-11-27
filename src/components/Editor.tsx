@@ -21,6 +21,7 @@ import type { ScreenState } from "./RemoteControl";
 
 // three.js is only loaded when someone opens the 3D view
 const View3D = dynamic(() => import("./View3D"), { ssr: false });
+const VideoExport = dynamic(() => import("./VideoExport"), { ssr: false });
 
 type Tool = "move" | "run" | "drib" | "pass" | "dir" | "erase";
 type Mode = "play" | "edit";
@@ -79,6 +80,7 @@ export default function Editor({ initial, readOnly = false, role, present = fals
   const [speed, setSpeed] = useState(1);
   const [space, setSpace] = useState(false);
   const [more, setMore] = useState(false);
+  const [video, setVideo] = useState(false);
   const [autoOpts, setAutoOpts] = useState({ us: true, them: true });
   const [sel, setSel] = useState<string | null>(null); // player picked in edit mode (for his task)
   const lastTap = useRef<{ id: string; at: number } | null>(null);
@@ -919,6 +921,12 @@ export default function Editor({ initial, readOnly = false, role, present = fals
                 ))}
               </div>
             </div>
+            {mode === "play" && !present && (
+              <div className="more-row">
+                <button className="btn" type="button" onClick={() => { stop(); setVideo(true); setMore(false); }}>Exportera video</button>
+                <span className="more-note">Spelet som video att skicka till laget{variants.length ? ` (spåret ${lineName(data, line)})` : ""}.</span>
+              </div>
+            )}
             {!readOnly && mode === "play" && (
               <div className="more-row">
                 <Link className="btn" href={`/presentera/${initial.id}`}>Presentera på tv</Link>
@@ -967,6 +975,8 @@ export default function Editor({ initial, readOnly = false, role, present = fals
           </div>
         </div>
       )}
+
+      {video && <VideoExport name={name} pieces={data.pieces} steps={steps} showThem={showThem} onClose={() => setVideo(false)} />}
 
       {show3d && viewer && pieceById[viewer] && (
         <View3D
