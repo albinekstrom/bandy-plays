@@ -116,7 +116,8 @@ h1{margin:0;font:800 clamp(28px, 4.5vw, 40px)/1 var(--head);text-transform:upper
 .arrow-run{stroke:var(--bla);stroke-width:.3;opacity:.8}
 .arrow-drib{stroke:var(--bla);stroke-width:.4}
 .arrow-pass{stroke:var(--rosa);stroke-width:.35;stroke-dasharray:.1 .9}
-.arrow.draft{opacity:.55}
+.arrow.draft{opacity:.7}
+.arrow.trace{stroke:var(--skiffer);stroke-width:.15;opacity:.35}
 .trails.playing .arrow{opacity:.35}
 .ah-run,.ah-drib{fill:var(--bla)}
 .ah-pass{fill:var(--rosa)}

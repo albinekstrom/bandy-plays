@@ -24,12 +24,15 @@ export interface Ball {
 }
 
 /* An arrow in step k describes what happens between step k and k+1.
-   run/drib arrows belong to a piece; pass arrows belong to the ball. */
+   run/drib arrows belong to a piece; pass arrows belong to the ball.
+   pts is [start, end]; ctrl, when set, bends it into one smooth turn
+   (a quadratic Bézier control point). Passes are always straight. */
 export interface Arrow {
   id: string;
   kind: ArrowKind;
   piece: string | null;
   pts: Pt[];
+  ctrl?: Pt | null;
 }
 
 export interface Step {

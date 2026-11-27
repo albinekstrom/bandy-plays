@@ -2,7 +2,7 @@
    Shared by the editor (client) and the server. */
 import type { Arrow, Ball, Piece, PlayData, Pos, Pt, Step } from "./types";
 import { US_START, THEM_START } from "./rink";
-import { along, dist, ease, lerp, lerpAngle, smooth } from "./geom";
+import { along, clamp, curvePts, dist, ease, heading, lerp, lerpAngle, polyLength } from "./geom";
 
 export const uid = () =>
   globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -36,19 +36,104 @@ export function ballPoint(ball: Ball, pos: Record<string, Pos>): Pt {
   return h ? carried(h) : [ball.x, ball.y];
 }
 
-/** Arrow points with the ends pinned to where things actually are in step k and k+1. */
-export function arrowPts(a: Arrow, step: Step, next: Step | undefined): Pt[] {
-  const pts = a.pts.slice();
+/* ---------- motion between two steps ----------
+   Everyone skates at the same speed, so short runs finish early.
+   Players face the way they skate, then turn to the direction set
+   for the next step. A pass leaves when the passer's run ends and,
+   if needed, waits so the ball meets the receiver on arrival. */
+
+export const SKATE = 6;   // m per second on screen
+export const BALL_SPEED = 20;
+export const TURN = 0.35; // seconds to turn on the spot
+
+const moveArrow = (s: Step, id: string) => s.arrows.find(r => r.kind !== "pass" && r.piece === id);
+
+/** Sampled path of an arrow, with ends pinned to where things are in step k and k+1. */
+export function arrowCurve(a: Arrow, step: Step, next: Step | undefined): Pt[] {
   if (a.kind === "pass") {
-    pts[0] = ballPoint(step.ball, step.pos);
-    if (next) pts[pts.length - 1] = ballPoint(next.ball, next.pos);
-  } else if (a.piece && step.pos[a.piece]) {
-    const p = step.pos[a.piece];
-    pts[0] = [p.x, p.y];
-    const q = next?.pos[a.piece];
-    if (q) pts[pts.length - 1] = [q.x, q.y];
+    const passer = step.ball.holder;
+    const runs = passer && next?.pos[passer] && moveArrow(step, passer);
+    const from = runs ? carried(next!.pos[passer!]) : ballPoint(step.ball, step.pos);
+    const to = next ? ballPoint(next.ball, next.pos) : a.pts[a.pts.length - 1];
+    return curvePts(from, to, null);
   }
-  return pts;
+  const p = a.piece ? step.pos[a.piece] : undefined;
+  const q = a.piece ? next?.pos[a.piece] : undefined;
+  const from: Pt = p ? [p.x, p.y] : a.pts[0];
+  const to: Pt = q ? [q.x, q.y] : a.pts[a.pts.length - 1];
+  return curvePts(from, to, a.ctrl);
+}
+
+interface Mover { path: Pt[]; len: number; dur: number; startDir: number; endDir: number }
+export interface Plan {
+  a: Step;
+  b: Step;
+  T: number;
+  movers: Record<string, Mover>;
+  pass: { path: Pt[]; start: number; flight: number } | null;
+}
+
+export function plan(a: Step, b: Step): Plan {
+  const movers: Record<string, Mover> = {};
+  let T = 0.8;
+  for (const id of Object.keys(a.pos)) {
+    const p = a.pos[id], q = b.pos[id] ?? p;
+    const arrow = moveArrow(a, id);
+    const moved = dist([p.x, p.y], [q.x, q.y]) > 0.05;
+    const path = arrow ? arrowCurve(arrow, a, b) : moved ? curvePts([p.x, p.y], [q.x, q.y], null) : [[p.x, p.y] as Pt];
+    const len = polyLength(path);
+    const dur = len / SKATE;
+    movers[id] = { path, len, dur, startDir: p.dir, endDir: q.dir };
+    T = Math.max(T, dur + TURN);
+  }
+  let pass: Plan["pass"] = null;
+  const arrow = a.arrows.find(r => r.kind === "pass");
+  if (arrow) {
+    const path = arrowCurve(arrow, a, b);
+    const flight = Math.max(0.25, polyLength(path) / BALL_SPEED);
+    const passer = a.ball.holder, rec = b.ball.holder;
+    let start = passer && moveArrow(a, passer) ? movers[passer].dur : 0;
+    if (rec && movers[rec]) start = Math.max(start, movers[rec].dur - flight);
+    pass = { path, start, flight };
+    T = Math.max(T, start + flight + 0.2);
+  }
+  return { a, b, T, movers, pass };
+}
+
+function moverAt(m: Mover, t: number): Pos {
+  if (m.len < 0.05) {
+    const [x, y] = m.path[0];
+    return { x, y, dir: lerpAngle(m.startDir, m.endDir, clamp(t / TURN, 0, 1)) };
+  }
+  const u = ease(clamp(t / m.dur, 0, 1));
+  const [x, y] = along(m.path, u);
+  const n = m.path.length;
+  if (t < m.dur) {
+    const tan = heading(along(m.path, Math.max(0, u - 0.02)), along(m.path, Math.min(1, u + 0.02)));
+    return { x, y, dir: lerpAngle(m.startDir, tan, clamp(t / TURN, 0, 1)) };
+  }
+  const endTan = heading(m.path[n - 2], m.path[n - 1]);
+  return { x, y, dir: lerpAngle(endTan, m.endDir, clamp((t - m.dur) / TURN, 0, 1)) };
+}
+
+/** Where everything is t seconds into the move from step a to step b. */
+export function frameAt(pl: Plan, t: number): Frame {
+  const pos: Record<string, Pos> = {};
+  for (const id of Object.keys(pl.movers)) pos[id] = moverAt(pl.movers[id], t);
+  const { a, b, pass } = pl;
+  let ball: Pt;
+  if (pass) {
+    const passer = a.ball.holder, rec = b.ball.holder;
+    if (t < pass.start) ball = passer && pos[passer] ? carried(pos[passer]) : ballPoint(a.ball, a.pos);
+    else if (t < pass.start + pass.flight) ball = along(pass.path, (t - pass.start) / pass.flight);
+    else ball = rec && pos[rec] ? carried(pos[rec]) : pass.path[pass.path.length - 1];
+  } else if (a.ball.holder && a.ball.holder === b.ball.holder && pos[a.ball.holder]) {
+    ball = carried(pos[a.ball.holder]);
+  } else {
+    const s = ballPoint(a.ball, a.pos), e = ballPoint(b.ball, b.pos), u = ease(clamp(t / pl.T, 0, 1));
+    ball = [lerp(s[0], e[0], u), lerp(s[1], e[1], u)];
+  }
+  return { pos, ball };
 }
 
 export interface Frame {
@@ -58,29 +143,6 @@ export interface Frame {
 
 export function stillFrame(step: Step): Frame {
   return { pos: step.pos, ball: ballPoint(step.ball, step.pos) };
-}
-
-/** Where everything is at fraction u of the way from step k to step k+1. */
-export function frameBetween(a: Step, b: Step, u: number): Frame {
-  const e = ease(u);
-  const pos: Record<string, Pos> = {};
-  for (const id of Object.keys(a.pos)) {
-    const p = a.pos[id], q = b.pos[id] ?? p;
-    const arrow = a.arrows.find(r => r.kind !== "pass" && r.piece === id);
-    const [x, y] = arrow ? along(smooth(arrowPts(arrow, a, b)), e) : [lerp(p.x, q.x, e), lerp(p.y, q.y, e)];
-    pos[id] = { x, y, dir: lerpAngle(p.dir, q.dir, e) };
-  }
-  let ball: Pt;
-  const pass = a.arrows.find(r => r.kind === "pass");
-  if (pass) {
-    ball = along(smooth(arrowPts(pass, a, b)), e);
-  } else if (a.ball.holder && a.ball.holder === b.ball.holder && pos[a.ball.holder]) {
-    ball = carried(pos[a.ball.holder]);
-  } else {
-    const s = ballPoint(a.ball, a.pos), t = ballPoint(b.ball, b.pos);
-    ball = [lerp(s[0], t[0], e), lerp(s[1], t[1], e)];
-  }
-  return { pos, ball };
 }
 
 /** The nearest piece within reach of a point, optionally limited to one side. */

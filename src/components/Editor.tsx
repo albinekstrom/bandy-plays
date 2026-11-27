@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Arrow, ArrowKind, Play, PlayData, Pt, Step } from "@/lib/types";
 import { L, W, MIDY, NAMES } from "@/lib/rink";
-import { clamp, dist, pathD, simplify, smooth, wavy } from "@/lib/geom";
+import { clamp, curvePts, dist, fitStroke, heading, pathD, wavy } from "@/lib/geom";
 import {
-  arrowPts, ballPoint, copyStep, frameBetween, movePiece, nearestPiece, stillFrame, uid, type Frame,
+  arrowCurve, ballPoint, copyStep, frameAt, movePiece, nearestPiece, plan, stillFrame, uid, type Frame,
 } from "@/lib/play";
 import Rink from "./Rink";
 
@@ -99,20 +99,7 @@ export default function Editor({ initial }: { initial: Play }) {
   const playing = anim !== null;
   const playRef = useRef<{ raf: number; all: boolean } | null>(null);
 
-  const stepDuration = useCallback((s: Step, n: Step) => {
-    let far = 0;
-    for (const id of Object.keys(s.pos)) {
-      const a = s.pos[id], b = n.pos[id];
-      if (b) far = Math.max(far, dist([a.x, a.y], [b.x, b.y]));
-    }
-    for (const a of s.arrows) {
-      const pts = smooth(arrowPts(a, s, n));
-      let len = 0;
-      for (let i = 1; i < pts.length; i++) len += dist(pts[i - 1], pts[i]);
-      far = Math.max(far, a.kind === "pass" ? len / 3 : len);
-    }
-    return clamp(far / 7, 1.2, 4.5) * 1000; // ~7 m per second on screen
-  }, []);
+  const stepDuration = useCallback((s: Step, n: Step) => plan(s, n).T * 1000, []);
 
   const stop = useCallback(() => {
     if (playRef.current) cancelAnimationFrame(playRef.current.raf);
@@ -160,7 +147,9 @@ export default function Editor({ initial }: { initial: Play }) {
   /* ---------- what to draw ---------- */
   const shownStep = anim ? steps[anim.from] : step;
   const shownNext = anim ? steps[anim.from + 1] : next;
-  const frame: Frame = anim ? frameBetween(steps[anim.from], steps[anim.from + 1], anim.u) : stillFrame(step);
+  const animFrom = anim ? anim.from : -1;
+  const animPlan = useMemo(() => (animFrom >= 0 ? plan(steps[animFrom], steps[animFrom + 1]) : null), [animFrom, steps]);
+  const frame: Frame = anim && animPlan ? frameAt(animPlan, anim.u * animPlan.T) : stillFrame(step);
 
   /* ---------- pointer → rink coordinates ---------- */
   const toWorld = (e: React.PointerEvent): Pt => {
@@ -197,7 +186,7 @@ export default function Editor({ initial }: { initial: Play }) {
       return;
     }
     if (!d) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* synthetic or stale pointer */ }
     if (d.kind !== "stroke") snapshot();
     dragRef.current = d;
     setDraft(d);
@@ -244,14 +233,14 @@ export default function Editor({ initial }: { initial: Play }) {
   };
 
   function finishStroke(d: Extract<Drag, { kind: "stroke" }>) {
-    const pts = simplify(d.pts);
-    const end = pts[pts.length - 1];
-    const before = pts[Math.max(0, pts.length - 2)];
-    const heading = Math.round((Math.atan2(end[1] - before[1], end[0] - before[0]) * 180) / Math.PI);
+    const fit = fitStroke(d.pts);
+    const ctrl = d.arrow === "pass" ? null : fit.ctrl; // passes fly straight
+    const end = fit.b;
+    const endDir = Math.round(heading(ctrl ?? fit.a, end));
     commit(cur => {
       let s = cur.steps.slice();
       if (!s[k + 1]) s.splice(k + 1, 0, copyStep(s[k]));
-      const arrow: Arrow = { id: uid(), kind: d.arrow, piece: d.piece, pts };
+      const arrow: Arrow = { id: uid(), kind: d.arrow, piece: d.piece, pts: [fit.a, end], ctrl };
       // one movement per player (and one pass) per step: a new stroke replaces the old
       const keep = s[k].arrows.filter(a => (d.arrow === "pass" ? a.kind !== "pass" : a.piece !== d.piece));
       s[k] = { ...s[k], arrows: [...keep, arrow] };
@@ -261,10 +250,10 @@ export default function Editor({ initial }: { initial: Play }) {
         s[k + 1] = { ...s[k + 1], ball: rec ? { holder: rec, x: end[0], y: end[1] } : { holder: null, x: end[0], y: end[1] } };
         if (s[k].ball.holder) {
           // the passer faces the pass
-          s = movePiece(s, k, s[k].ball.holder, { dir: heading });
+          s = movePiece(s, k, s[k].ball.holder, { dir: endDir });
         }
       } else if (d.piece) {
-        s = movePiece(s, k + 1, d.piece, { x: end[0], y: end[1], dir: heading });
+        s = movePiece(s, k + 1, d.piece, { x: end[0], y: end[1], dir: endDir });
         if (d.arrow === "drib" || s[k].ball.holder === d.piece) {
           s[k] = { ...s[k], ball: { ...s[k].ball, holder: d.piece } };
           if (!s[k].arrows.some(a => a.kind === "pass")) s[k + 1] = { ...s[k + 1], ball: { ...s[k + 1].ball, holder: d.piece } };
@@ -278,8 +267,7 @@ export default function Editor({ initial }: { initial: Play }) {
     // nearest arrow first
     let best: string | null = null, bd = 1.8;
     for (const a of step.arrows) {
-      const pts = smooth(arrowPts(a, step, next));
-      for (const q of pts) { const dd = dist(p, q); if (dd < bd) { bd = dd; best = a.id; } }
+      for (const q of arrowCurve(a, step, next)) { const dd = dist(p, q); if (dd < bd) { bd = dd; best = a.id; } }
     }
     if (best) {
       commit(cur => ({ ...cur, steps: cur.steps.map((s, i) => (i === k ? { ...s, arrows: s.arrows.filter(a => a.id !== best) } : s)) }));
@@ -386,13 +374,21 @@ export default function Editor({ initial }: { initial: Play }) {
             <g className={anim ? "trails playing" : "trails"}>
               {shownStep.arrows.map(a => {
                 if (a.piece && !showThem && pieceById[a.piece]?.side === "them") return null;
-                const pts = smooth(arrowPts(a, shownStep, shownNext));
+                const pts = arrowCurve(a, shownStep, shownNext);
                 const d = pathD(a.kind === "drib" ? wavy(pts) : pts);
                 return <path key={a.id} d={d} className={"arrow arrow-" + a.kind} markerEnd={`url(#ah-${a.kind})`} />;
               })}
-              {draft?.kind === "stroke" && (
-                <path d={pathD(draft.pts)} className={"arrow draft arrow-" + draft.arrow} />
-              )}
+              {draft?.kind === "stroke" && draft.pts.length > 1 && (() => {
+                // show the raw finger trace faintly and what it snaps to
+                const f = fitStroke(draft.pts);
+                const snapped = curvePts(f.a, f.b, draft.arrow === "pass" ? null : f.ctrl);
+                return (
+                  <>
+                    <path d={pathD(draft.pts)} className="arrow trace" />
+                    <path d={pathD(draft.arrow === "drib" ? wavy(snapped) : snapped)} className={"arrow draft arrow-" + draft.arrow} markerEnd={`url(#ah-${draft.arrow})`} />
+                  </>
+                );
+              })()}
             </g>
 
             <g className="players">
