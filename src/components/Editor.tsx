@@ -26,12 +26,13 @@ import type { ScreenState } from "./RemoteControl";
 const View3D = dynamic(() => import("./View3D"), { ssr: false });
 const VideoExport = dynamic(() => import("./VideoExport"), { ssr: false });
 
-type Tool = "move" | "run" | "pass" | "dir" | "erase";
+type Tool = "move" | "run" | "pass" | "lob" | "dir" | "erase";
 type Mode = "play" | "edit";
 const TOOLS: { id: Tool; label: string; hint: string }[] = [
   { id: "move", label: "Flytta", hint: "Dra en spelare. Bollen följer bollföraren och flyttas bara med Pass." },
   { id: "run", label: "Åkning", hint: "Dra från en spelare dit hen ska åka. Bollföraren driver bollen (rosa linje). Dra i punkten på linjen för att böja den." },
-  { id: "pass", label: "Pass", hint: "Dra från bollen till mottagaren." },
+  { id: "pass", label: "Pass", hint: "Dra från bollen till en medspelare. Passet går i rak linje längs isen." },
+  { id: "lob", label: "Lyra", hint: "Dra från bollen till en medspelare. Bollen lyfts i rak linje över spelarna." },
   { id: "dir", label: "Riktning", hint: "Dra från en spelare åt det håll hen ska titta." },
   { id: "erase", label: "Sudda", hint: "Tryck på en pil eller en motståndare för att ta bort den." },
 ];
@@ -41,7 +42,7 @@ type Drag =
   | { kind: "piece"; id: string }
   | { kind: "dir"; id: string }
   | { kind: "bend"; arrow: string; piece: string; index: number; handles: Pt[] }
-  | { kind: "stroke"; arrow: ArrowKind; piece: string | null; pts: Pt[]; after?: boolean };
+  | { kind: "stroke"; arrow: ArrowKind; piece: string | null; pts: Pt[]; after?: boolean; lob?: boolean };
 
 type Save = "saved" | "saving" | "dirty" | "error" | "conflict";
 type PlayOpts = { line?: Line; skipAsk?: number; onDone?: () => void };
@@ -194,8 +195,9 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     timer.current = setTimeout(() => { void saveNow(); }, shown.current === acked.current ? 0 : 700);
   }, [name, data, readOnly, saveNow]);
 
-  // every way out saves first: "Ladda om", links in the app, closing the tab (asks) and,
-  // as a last resort, leaving with the browser's back button (a best-effort save)
+  // every way out saves first: "Ladda om" and links in the app wait for the save loop, closing
+  // the tab asks. The browser's back button stays in the app, so the same save loop simply keeps
+  // running after the editor is gone and finishes with what the coach last saw.
   const flush = useCallback(async () => { await saveNow(); return !unsaved() && !conflict.current; }, [saveNow, unsaved]);
   const router = useRouter();
   const leave = (e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -212,14 +214,9 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     return () => {
       off();
       removeEventListener("beforeunload", warn);
-      if (shown.current !== acked.current && !conflict.current) {
-        fetch(`/api/plays/${initial.id}`, {
-          method: "PUT", headers: { "content-type": "application/json" }, keepalive: true,
-          body: JSON.stringify({ ...JSON.parse(shown.current), rev: revRef.current }),
-        }).catch(() => {});
-      }
+      if (unsaved() || timer.current) void saveNow(); // the one save loop, no second write path
     };
-  }, [readOnly, flush, unsaved, initial.id]);
+  }, [readOnly, flush, unsaved, saveNow]);
 
   /* ---------- phones are view-only for now: no edit mode ---------- */
   const [phone, setPhone] = useState(false);
@@ -471,14 +468,14 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     } else if (tool === "run") {
       const id = nearestPiece(visible, pos, p, REACH);
       if (id) d = { kind: "stroke", arrow: id === step.ball.holder ? "drib" : "run", piece: id, pts: [[pos[id].x, pos[id].y]] };
-    } else if (tool === "pass") {
+    } else if (tool === "pass" || tool === "lob") {
       // if players skate in this step, the pass comes after: from where the ball ends up, as an in-between step
       const after = step.arrows.some(a => a.kind !== "pass");
       const at = after ? stepEnd.pos : pos;
       const holder = step.ball.holder;
       const from = after ? ballPoint({ ...stepEnd.ball, holder }, stepEnd.pos) : ball;
       const holderNear = holder && nearestPiece(visible, at, p, REACH) === holder;
-      if (dist(p, from) < REACH || holderNear) d = { kind: "stroke", arrow: "pass", piece: null, pts: [from], after };
+      if (dist(p, from) < REACH || holderNear) d = { kind: "stroke", arrow: "pass", piece: null, pts: [from], after, lob: tool === "lob" };
     } else if (tool === "dir") {
       const id = nearestPiece(visible, pos, p, REACH);
       if (id) d = { kind: "dir", id };
@@ -546,15 +543,23 @@ export default function Editor({ initial, readOnly = false, shared = false, role
   };
 
   function finishStroke(d: Extract<Drag, { kind: "stroke" }>) {
+    // a pass always reaches a teammate, in a straight line to where he is when it's played
+    let rec: string | null = null;
+    if (d.arrow === "pass") {
+      const holder = step.ball.holder;
+      rec = nearestPiece(visible.filter(x => x.side === "us" && x.id !== holder), stepEnd.pos, d.pts[d.pts.length - 1], REACH);
+      if (!rec) { setNotice("En passning måste gå fram till en medspelare. Släpp den på spelaren."); return; }
+      setNotice(null);
+    }
     // passes fly straight; runs follow the drawn curve, smoothed
-    const way = d.arrow === "pass" ? [d.pts[0], d.pts[d.pts.length - 1]] : fitStroke(d.pts);
+    const way: Pt[] = d.arrow === "pass" && rec ? [d.pts[0], [stepEnd.pos[rec].x, stepEnd.pos[rec].y]] : fitStroke(d.pts);
     const curve = spline(way);
     const end = way[way.length - 1];
     const endDir = Math.round(heading(curve[Math.max(0, curve.length - 3)], end));
-    commitLine((cur, doc) => {
+    commitLine(cur => {
       // steps are only made with "+ Steg"; an arrow in the last step waits for it
       let s = cur.slice();
-      const arrow: Arrow = { id: uid(), kind: d.arrow, piece: d.piece, pts: way };
+      const arrow: Arrow = { id: uid(), kind: d.arrow, piece: d.piece, pts: way, ...(d.lob ? { lob: true } : {}) };
       // one movement per player (and one pass) per step: a new stroke replaces the old
       const keep = s[kk].arrows.filter(a => (d.arrow === "pass" ? a.kind !== "pass" : a.piece !== d.piece));
       s[kk] = { ...s[kk], arrows: [...keep, arrow] };
@@ -562,10 +567,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
       if (d.arrow === "pass") {
         // after the runs of this step, the ball goes from where it ended up
         if (d.after) s[kk] = { ...s[kk], passAt: 1 };
-        if (s[kk + 1]) {
-          const rec = nearestPiece(doc.pieces, s[kk + 1].pos, end, REACH);
-          s[kk + 1] = { ...s[kk + 1], ball: { holder: rec, x: end[0], y: end[1] } };
-        }
+        if (s[kk + 1]) s[kk + 1] = { ...s[kk + 1], ball: { holder: rec, x: end[0], y: end[1] } };
         if (s[kk].ball.holder && !d.after) {
           // a passer standing still faces the pass
           s = movePiece(s, kk, s[kk].ball.holder, { dir: endDir });
@@ -900,7 +902,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
                   const kind = arrowKind(a, shownStep);
                   const d = pathD(pts);
                   const mine = !roleId || a.piece === roleId || (a.kind === "pass" && (shownStep.ball.holder === roleId || shownNext?.ball.holder === roleId));
-                  return <path key={a.id} d={d} className={"arrow arrow-" + kind + (mine ? "" : " other")} markerEnd={`url(#ah-${kind})`} />;
+                  return <path key={a.id} d={d} className={"arrow arrow-" + kind + (a.lob ? " lob" : "") + (mine ? "" : " other")} markerEnd={`url(#ah-${kind})`} />;
                 })}
                 {draft?.kind === "stroke" && draft.pts.length > 1 && (() => {
                   // show the raw finger trace faintly and what it snaps to
@@ -909,7 +911,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
                   return (
                     <>
                       <path d={pathD(draft.pts)} className="arrow trace" />
-                      <path d={pathD(snapped)} className={"arrow draft arrow-" + draft.arrow} markerEnd={`url(#ah-${draft.arrow})`} />
+                      <path d={pathD(snapped)} className={"arrow draft arrow-" + draft.arrow + (draft.lob ? " lob" : "")} markerEnd={`url(#ah-${draft.arrow})`} />
                     </>
                   );
                 })()}
@@ -932,7 +934,8 @@ export default function Editor({ initial, readOnly = false, shared = false, role
                 );
               })}
             </g>
-            <circle className="ball" cx={frame.ball[0]} cy={frame.ball[1]} r={0.6} />
+            {!!frame.lift && <circle className="ball-shadow" cx={frame.ball[0]} cy={frame.ball[1]} r={0.5} />}
+            <circle className="ball" cx={frame.ball[0]} cy={frame.ball[1] - (frame.lift ?? 0) * 1.5} r={0.6 * (1 + 0.8 * (frame.lift ?? 0))} />
             {ghostBall && !hideArrows && <circle className="ball ghost" cx={ghostBall[0]} cy={ghostBall[1]} r={0.6} />}
             {!hideArrows && handles.map((h, i) => <circle key={i} className="bend" cx={h[0]} cy={h[1]} r={0.7} />)}
           </g>

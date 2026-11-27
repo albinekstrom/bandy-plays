@@ -33,6 +33,8 @@ export interface Arrow {
   piece: string | null;
   pts: Pt[];
   ctrl?: Pt | null;
+  /** A pass lifted over the players (lyra) instead of along the ice. */
+  lob?: boolean;
 }
 
 export interface Step {

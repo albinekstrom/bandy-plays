@@ -284,7 +284,7 @@ function drawArrows(sc: Scene, step: Step, next: Step | undefined, alpha: number
     const color = kind === "run" ? C.bla : C.rosa;
     ctx.strokeStyle = color;
     ctx.globalAlpha = alpha * (kind === "run" ? 0.8 : 1);
-    if (kind === "pass") { ctx.lineWidth = 0.35; ctx.setLineDash([0.1, 0.9]); }
+    if (kind === "pass") { ctx.lineWidth = 0.35; ctx.setLineDash(a.lob ? [1.2, 0.8] : [0.1, 0.9]); }
     else { ctx.lineWidth = kind === "drib" ? 0.4 : 0.3; ctx.setLineDash([]); }
     polyline(ctx, pts);
     ctx.setLineDash([]);
@@ -324,11 +324,17 @@ function drawPieces(sc: Scene, pos: Record<string, Pos>, holder: string | null) 
   }
 }
 
-function drawBall(sc: Scene, b: Pt) {
+function drawBall(sc: Scene, b: Pt, lift = 0) {
   const { ctx } = sc;
   toWorld(sc);
+  if (lift > 0) { // a lob: shadow on the ice, the ball above it and bigger
+    ctx.beginPath();
+    ctx.arc(b[0], b[1], 0.5, 0, 2 * Math.PI);
+    ctx.fillStyle = "rgba(15,27,42,.25)";
+    ctx.fill();
+  }
   ctx.beginPath();
-  ctx.arc(b[0], b[1], 0.6, 0, 2 * Math.PI);
+  ctx.arc(b[0], b[1] - lift * 1.5, 0.6 * (1 + 0.8 * lift), 0, 2 * Math.PI);
   ctx.fillStyle = C.rosa;
   ctx.fill();
   ctx.strokeStyle = "#fff";
@@ -469,7 +475,7 @@ function drawScene(sc: Scene, k: number, frame: Frame, arrowAlpha: number) {
   drawRink(sc);
   drawArrows(sc, sc.steps[k], sc.steps[k + 1], arrowAlpha);
   drawPieces(sc, frame.pos, sc.steps[k].ball.holder);
-  drawBall(sc, frame.ball);
+  drawBall(sc, frame.ball, frame.lift ?? 0);
   drawHeader(sc, k);
   drawCaption(sc, k);
 }

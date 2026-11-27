@@ -23,7 +23,19 @@ export function upgrade<T extends PlayData>(data: T): T & { v: number } {
   let d = { ...data } as Data;
   let v = typeof d.v === "number" && Number.isInteger(d.v) && d.v >= 0 ? d.v : 0;
   while (v < SCHEMA_VERSION) d = MIGRATIONS[v]({ ...d, v: ++v });
-  return { ...d, v } as T & { v: number };
+  return withDefaults({ ...d, v }) as T & { v: number };
+}
+
+/* Defaults for optional fields older versions may have left out, so callers can rely on
+   them (like pydantic defaults). Unknown fields are kept; nothing is removed. */
+const stepDefaults = (s: Record<string, unknown>) => (typeof s.text === "string" ? s : { ...s, text: "" });
+function withDefaults<T extends Record<string, unknown>>(d: T): T {
+  const steps = Array.isArray(d.steps) ? d.steps.map(s => stepDefaults(s as Record<string, unknown>)) : d.steps;
+  const variants = Array.isArray(d.variants)
+    ? d.variants.map(v => (Array.isArray((v as { steps?: unknown }).steps)
+      ? { ...(v as object), steps: (v as { steps: Record<string, unknown>[] }).steps.map(stepDefaults) } : v))
+    : d.variants;
+  return { ...d, steps, ...(variants !== undefined ? { variants } : {}) };
 }
 
 // fields of a stored play that are not part of its data
@@ -51,19 +63,21 @@ const isPt = (v: unknown) => Array.isArray(v) && v.length === 2 && isNum(v[0]) &
 const isPiece = (v: unknown) => isObj(v) && isId(v.id) && (v.side === "us" || v.side === "them") && isStr(v.label, 20);
 const isPos = (v: unknown) => isObj(v) && isNum(v.x) && isNum(v.y) && isNum(v.dir);
 const isArrow = (v: unknown) => isObj(v) && isId(v.id) && (v.kind === "run" || v.kind === "drib" || v.kind === "pass") &&
-  (v.piece === null || isId(v.piece)) && list(v.pts, 400, isPt, 1) && opt(v.ctrl, c => c === null || isPt(c));
+  (v.piece === null || isId(v.piece)) && list(v.pts, 400, isPt, 1) && opt(v.ctrl, c => c === null || isPt(c)) &&
+  opt(v.lob, l => typeof l === "boolean");
 const isStep = (v: unknown) => isObj(v) && isId(v.id) && opt(v.text, t => isStr(t, 500)) &&
   isObj(v.pos) && Object.keys(v.pos).length <= 60 && Object.values(v.pos).every(isPos) &&
   isObj(v.ball) && (v.ball.holder === null || isId(v.ball.holder)) && isNum(v.ball.x) && isNum(v.ball.y) &&
   list(v.arrows, 100, isArrow) && opt(v.passAt, isNum) &&
   opt(v.notes, n => isObj(n) && Object.keys(n).length <= 60 && Object.values(n).every(t => isStr(t, 500)));
 
-/** The play data if every known field is valid, else null. Unknown fields are kept. */
+/** The play data if every known field is valid, else null. Unknown fields are kept and
+    missing optional fields get their defaults (a step's text is always a string). */
 export function parsePlayData(v: unknown): (PlayData & O) | null {
   if (!isObj(v) || !list(v.pieces, 60, isPiece) || !list(v.steps, 200, isStep, 1)) return null;
   const n = (v.steps as unknown[]).length;
   const variantOk = (x: unknown) => isObj(x) && isId(x.id) && isStr(x.name, 100) &&
     Number.isInteger(x.from) && (x.from as number) >= 0 && (x.from as number) < n && list(x.steps, 200, isStep, 1);
   if (!opt(v.variants, x => list(x, 20, variantOk))) return null;
-  return v as PlayData & O;
+  return withDefaults(v) as PlayData & O;
 }

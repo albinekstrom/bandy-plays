@@ -44,6 +44,7 @@ export function ballPoint(ball: Ball, pos: Record<string, Pos>): Pt {
 
 export const SKATE = 6;   // m per second on screen
 export const BALL_SPEED = 20;
+export const LOB_SPEED = 14; // a lob hangs in the air a little longer
 export const TURN = 0.35; // seconds to turn on the spot
 
 /** How an arrow reads: only the ball holder can dribble, so his run is a dribble and anyone else's is a run. */
@@ -119,7 +120,7 @@ export interface Plan {
   b: Step;
   T: number;
   movers: Record<string, Mover>;
-  pass: { path: Pt[]; start: number; flight: number } | null;
+  pass: { path: Pt[]; start: number; flight: number; lob: boolean } | null;
 }
 
 export function plan(a: Step, b: Step): Plan {
@@ -139,12 +140,13 @@ export function plan(a: Step, b: Step): Plan {
   const arrow = a.arrows.find(r => r.kind === "pass");
   if (arrow) {
     const path = arrowCurve(arrow, a, b);
-    const flight = Math.max(0.25, polyLength(path) / BALL_SPEED);
+    const lob = !!arrow.lob;
+    const flight = Math.max(0.25, polyLength(path) / (lob ? LOB_SPEED : BALL_SPEED));
     const passer = a.ball.holder, rec = b.ball.holder;
     let start = passer && moveArrow(a, passer) ? movers[passer].dur * clamp(a.passAt ?? 1, 0, 1) : 0;
     // with no timing set, wait so the ball meets the receiver; a set timing is kept as drawn
     if (rec && movers[rec] && (a.passAt === undefined || !passer || !moveArrow(a, passer))) start = Math.max(start, movers[rec].dur - flight);
-    pass = { path, start, flight };
+    pass = { path, start, flight, lob };
     T = Math.max(T, start + flight + 0.2);
   }
   return { a, b, T, movers, pass };
@@ -172,10 +174,15 @@ export function frameAt(pl: Plan, t: number): Frame {
   for (const id of Object.keys(pl.movers)) pos[id] = moverAt(pl.movers[id], t);
   const { a, b, pass } = pl;
   let ball: Pt;
+  let lift = 0;
   if (pass) {
     const passer = a.ball.holder, rec = b.ball.holder;
     if (t < pass.start) ball = passer && pos[passer] ? carried(pos[passer]) : ballPoint(a.ball, a.pos);
-    else if (t < pass.start + pass.flight) ball = along(pass.path, (t - pass.start) / pass.flight);
+    else if (t < pass.start + pass.flight) {
+      const u = (t - pass.start) / pass.flight;
+      ball = along(pass.path, u);
+      if (pass.lob) lift = Math.sin(Math.PI * u); // up and down again over the players
+    }
     else ball = rec && pos[rec] ? carried(pos[rec]) : pass.path[pass.path.length - 1];
   } else if (a.ball.holder && a.ball.holder === b.ball.holder && pos[a.ball.holder]) {
     ball = carried(pos[a.ball.holder]);
@@ -183,12 +190,14 @@ export function frameAt(pl: Plan, t: number): Frame {
     const s = ballPoint(a.ball, a.pos), e = ballPoint(b.ball, b.pos), u = ease(clamp(t / pl.T, 0, 1));
     ball = [lerp(s[0], e[0], u), lerp(s[1], e[1], u)];
   }
-  return { pos, ball };
+  return { pos, ball, lift };
 }
 
 export interface Frame {
   pos: Record<string, Pos>;
   ball: Pt;
+  /** Height of a lobbed ball, 0 (on the ice) to 1 (top of the arc). */
+  lift?: number;
 }
 
 export function stillFrame(step: Step): Frame {
