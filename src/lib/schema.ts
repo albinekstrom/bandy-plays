@@ -27,9 +27,43 @@ export function upgrade<T extends PlayData>(data: T): T & { v: number } {
 }
 
 // fields of a stored play that are not part of its data
-const META = new Set(["id", "name", "updatedAt", "shareToken", "tags", "base", "tab"]);
+const META = new Set(["id", "name", "updatedAt", "revision", "shareToken", "tags", "rev", "base", "tab"]);
 
 /** The data part of a play or a save request, unknown fields included. */
 export function dataOf(o: Record<string, unknown>): PlayData & Record<string, unknown> {
   return Object.fromEntries(Object.entries(o).filter(([k]) => !META.has(k))) as PlayData & Record<string, unknown>;
+}
+
+/* ---------- validation at the write boundary ----------
+   Checks every field this version knows, at every level, and accepts what older versions
+   wrote (optional text, notes, passAt, the old `ctrl` curve). Fields it doesn't know are
+   allowed and kept: a valid play is returned unchanged. */
+type O = Record<string, unknown>;
+const isObj = (v: unknown): v is O => !!v && typeof v === "object" && !Array.isArray(v);
+const isNum = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+const isStr = (v: unknown, max: number) => typeof v === "string" && v.length <= max;
+const isId = (v: unknown) => isStr(v, 64) && (v as string).length > 0;
+const opt = (v: unknown, ok: (v: unknown) => boolean) => v === undefined || ok(v);
+const list = (v: unknown, max: number, ok: (v: unknown) => boolean, min = 0) =>
+  Array.isArray(v) && v.length >= min && v.length <= max && v.every(ok);
+const isPt = (v: unknown) => Array.isArray(v) && v.length === 2 && isNum(v[0]) && isNum(v[1]);
+
+const isPiece = (v: unknown) => isObj(v) && isId(v.id) && (v.side === "us" || v.side === "them") && isStr(v.label, 20);
+const isPos = (v: unknown) => isObj(v) && isNum(v.x) && isNum(v.y) && isNum(v.dir);
+const isArrow = (v: unknown) => isObj(v) && isId(v.id) && (v.kind === "run" || v.kind === "drib" || v.kind === "pass") &&
+  (v.piece === null || isId(v.piece)) && list(v.pts, 400, isPt, 1) && opt(v.ctrl, c => c === null || isPt(c));
+const isStep = (v: unknown) => isObj(v) && isId(v.id) && opt(v.text, t => isStr(t, 500)) &&
+  isObj(v.pos) && Object.keys(v.pos).length <= 60 && Object.values(v.pos).every(isPos) &&
+  isObj(v.ball) && (v.ball.holder === null || isId(v.ball.holder)) && isNum(v.ball.x) && isNum(v.ball.y) &&
+  list(v.arrows, 100, isArrow) && opt(v.passAt, isNum) &&
+  opt(v.notes, n => isObj(n) && Object.keys(n).length <= 60 && Object.values(n).every(t => isStr(t, 500)));
+
+/** The play data if every known field is valid, else null. Unknown fields are kept. */
+export function parsePlayData(v: unknown): (PlayData & O) | null {
+  if (!isObj(v) || !list(v.pieces, 60, isPiece) || !list(v.steps, 200, isStep, 1)) return null;
+  const n = (v.steps as unknown[]).length;
+  const variantOk = (x: unknown) => isObj(x) && isId(x.id) && isStr(x.name, 100) &&
+    Number.isInteger(x.from) && (x.from as number) >= 0 && (x.from as number) < n && list(x.steps, 200, isStep, 1);
+  if (!opt(v.variants, x => list(x, 20, variantOk))) return null;
+  return v as PlayData & O;
 }

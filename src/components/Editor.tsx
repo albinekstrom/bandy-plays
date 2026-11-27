@@ -3,15 +3,16 @@
    Play mode also has branch choices, a quiz, passing lanes and the 3D view;
    readOnly (a shared link) is play mode only, without saving. */
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { onFlush } from "@/lib/unsaved";
 import { dataOf } from "@/lib/schema";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Arrow, ArrowKind, Play, PlayData, Pt, Step } from "@/lib/types";
 import { L, W, MIDY, NAMES } from "@/lib/rink";
-import { along, clamp, dist, fitStroke, heading, pathD, spline } from "@/lib/geom";
+import { clamp, dist, fitStroke, heading, pathD, spline } from "@/lib/geom";
 import {
-  arrowCurve, arrowKind, ballPoint, endState, holderRun, passOrigin, frameAt, movePiece, nearestPiece, plan, runEndDir, stepAfter, stillFrame, uid, type Frame,
+  arrowCurve, arrowKind, ballPoint, endState, holderRun, passOrigin, runHandles, frameAt, movePiece, nearestPiece, placeFromStart, plan, runEndDir, skatedBefore, stepAfter, stillFrame, uid, type Frame,
 } from "@/lib/play";
 import { choicesAt, everyStep, lineName, lineSteps, ownFrom, receiverAt, writeLine, type Line } from "@/lib/lines";
 import { laneStatus, type Lane } from "@/lib/lanes";
@@ -39,7 +40,7 @@ const REACH = 3.2; // metres: generous for fingers
 type Drag =
   | { kind: "piece"; id: string }
   | { kind: "dir"; id: string }
-  | { kind: "bend"; arrow: string; piece: string }
+  | { kind: "bend"; arrow: string; piece: string; index: number; handles: Pt[] }
   | { kind: "stroke"; arrow: ArrowKind; piece: string | null; pts: Pt[]; after?: boolean };
 
 type Save = "saved" | "saving" | "dirty" | "error" | "conflict";
@@ -85,14 +86,15 @@ export default function Editor({ initial, readOnly = false, shared = false, role
   const [more, setMore] = useState(false);
   const [video, setVideo] = useState(false);
   const [autoOpts, setAutoOpts] = useState({ us: true, them: true });
-  const [sel, setSel] = useState<string | null>(null); // player picked in edit mode (for his task)
+  const [sel, setSel] = useState<string | null>(null);
+  const [selArrow, setSelArrow] = useState<string | null>(null); // run tapped to reshape
+  const [notice, setNotice] = useState<string | null>(null); // why something can't be done // player picked in edit mode (for his task)
   const lastTap = useRef<{ id: string; at: number } | null>(null);
   const quizTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const worldRef = useRef<SVGGElement>(null);
   const dragRef = useRef<Drag | null>(null);
-  const pieceMoved = useRef(false);
   const dataRef = useRef(data);
   const lineRef = useRef(line);
   const speedRef = useRef(speed);
@@ -136,66 +138,88 @@ export default function Editor({ initial, readOnly = false, shared = false, role
   }, [past]);
 
   /* ---------- autosave ----------
-     Saves run one at a time and say which version they build on (base).
-     If someone else saved in between, the server refuses (409) and nothing is
-     overwritten: the coach picks whose version to keep. */
-  const first = useRef(true);
-  const latest = useRef({ name, data });
-  const baseRef = useRef(initial.updatedAt);
-  const chain = useRef<Promise<boolean>>(Promise.resolve(true));
+     One request at a time. `acked` is what the server has confirmed and `shown` is what
+     the editor shows; after every response they are compared again, so a change made while
+     a save was in flight (an undo back to the saved state included) is always saved too.
+     Each save names the revision it builds on: if someone else saved in between, the
+     server answers 409, nothing is overwritten and the coach picks a version. */
+  const shown = useRef("");
+  const acked = useRef<string | null>(null); // set to the play as loaded: what the server has, so opening never writes
+  const revRef = useRef(initial.revision ?? 0);
+  const inFlight = useRef<Promise<void> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dirty = useRef(false);
   const conflict = useRef(false);
-  // what the server has: only a real change is saved, so opening or watching a play never writes to it
-  const savedJson = useRef<string | null>(null);
+  const failed = useRef(false);
+  const unsaved = useCallback(() => acked.current !== null && (shown.current !== acked.current || inFlight.current !== null), []);
+  const status = useCallback((): Save => (conflict.current ? "conflict" : failed.current ? "error"
+    : inFlight.current ? "saving" : shown.current !== acked.current ? "dirty" : "saved"), []);
 
-  const saveNow = useCallback((force = false): Promise<boolean> => {
+  /** Save until the server has what the editor shows; resolves when idle. force: overwrite after a conflict. */
+  const saveNow = useCallback((force = false): Promise<void> => {
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-    chain.current = chain.current.then(async () => {
-      if (conflict.current && !force) return false;
-      if (!dirty.current && !force) return true;
-      dirty.current = false;
-      const sent = JSON.stringify({ name: latest.current.name, ...latest.current.data });
-      setSave("saving");
-      try {
-        const res = await fetch(`/api/plays/${initial.id}`, {
-          method: "PUT", headers: { "content-type": "application/json" }, keepalive: true,
-          body: JSON.stringify({ name: latest.current.name, ...latest.current.data, base: force ? undefined : baseRef.current}),
-        });
-        if (res.status === 409) { conflict.current = true; dirty.current = true; setSave("conflict"); return false; }
-        if (!res.ok) { dirty.current = true; setSave("error"); return false; }
-        savedJson.current = sent;
-        baseRef.current = ((await res.json()) as { updatedAt: string }).updatedAt;
-        conflict.current = false;
-        setSave(dirty.current ? "dirty" : "saved");
-        return true;
-      } catch { dirty.current = true; setSave("error"); return false; }
-    });
-    return chain.current;
-  }, [initial.id]);
+    if (inFlight.current) return inFlight.current; // it checks the draft again when it's done
+    if ((conflict.current && !force) || shown.current === acked.current) { setSave(status()); return Promise.resolve(); }
+    const run = (async () => {
+      let overwrite = force;
+      while (shown.current !== acked.current && (!conflict.current || overwrite)) {
+        const sent = shown.current;
+        setSave("saving");
+        try {
+          const res = await fetch(`/api/plays/${initial.id}`, {
+            method: "PUT", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ...JSON.parse(sent), rev: overwrite ? undefined : revRef.current }),
+          });
+          if (res.status === 409) { conflict.current = true; break; }
+          if (!res.ok) { failed.current = true; break; }
+          revRef.current = ((await res.json()) as { revision: number }).revision;
+          acked.current = sent;
+          conflict.current = failed.current = overwrite = false;
+        } catch { failed.current = true; break; }
+      }
+      inFlight.current = null;
+      setSave(status());
+    })();
+    inFlight.current = run;
+    return run;
+  }, [initial.id, status]);
 
   useEffect(() => {
     if (readOnly) return;
-    latest.current = { name, data };
-    const json = JSON.stringify({ name, ...data });
-    if (first.current) { first.current = false; savedJson.current = json; return; }
-    if (json === savedJson.current) return; // nothing changed (e.g. effects re-running)
-    dirty.current = true;
+    shown.current = JSON.stringify({ name, ...data });
+    acked.current ??= shown.current;
+    failed.current = false;
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
     if (conflict.current) return; // wait for the coach's choice
-    setSave("dirty");
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => { void saveNow(); }, 700);
+    // back to what the server has (an undo): nothing to save, unless a save is under way (it rechecks)
+    timer.current = setTimeout(() => { void saveNow(); }, shown.current === acked.current ? 0 : 700);
   }, [name, data, readOnly, saveNow]);
 
-  // "Ladda om" saves first; closing the tab with unsaved work asks first
+  // every way out saves first: "Ladda om", links in the app, closing the tab (asks) and,
+  // as a last resort, leaving with the browser's back button (a best-effort save)
+  const flush = useCallback(async () => { await saveNow(); return !unsaved() && !conflict.current; }, [saveNow, unsaved]);
+  const router = useRouter();
+  const leave = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (readOnly || !unsaved()) return;
+    e.preventDefault();
+    const href = e.currentTarget.getAttribute("href")!;
+    void flush().then(ok => { if (ok) router.push(href); });
+  };
   useEffect(() => {
     if (readOnly) return;
-    const off = onFlush(() => saveNow());
-    const warn = (e: BeforeUnloadEvent) => { if (dirty.current) e.preventDefault(); };
+    const off = onFlush(flush);
+    const warn = (e: BeforeUnloadEvent) => { if (unsaved()) e.preventDefault(); };
     addEventListener("beforeunload", warn);
-    return () => { off(); removeEventListener("beforeunload", warn); };
-  }, [readOnly, saveNow]);
-
+    return () => {
+      off();
+      removeEventListener("beforeunload", warn);
+      if (shown.current !== acked.current && !conflict.current) {
+        fetch(`/api/plays/${initial.id}`, {
+          method: "PUT", headers: { "content-type": "application/json" }, keepalive: true,
+          body: JSON.stringify({ ...JSON.parse(shown.current), rev: revRef.current }),
+        }).catch(() => {});
+      }
+    };
+  }, [readOnly, flush, unsaved, initial.id]);
 
   /* ---------- phones are view-only for now: no edit mode ---------- */
   const [phone, setPhone] = useState(false);
@@ -351,12 +375,10 @@ export default function Editor({ initial, readOnly = false, shared = false, role
   const ghostBall: Pt | null = mode === "edit" && !anim && holderRun(step)
     ? (next && step.arrows.some(a => a.kind === "pass") ? passOrigin(step, next) : ballPoint({ ...stepEnd.ball, holder: step.ball.holder }, stepEnd.pos))
     : null;
-  // the selected player's run gets a handle to bend it
-  const bendArrow = mode === "edit" && !playing && sel && (tool === "move" || tool === "run")
-    ? step.arrows.find(a => a.kind !== "pass" && a.piece === sel) : undefined;
-  const bendPt: Pt | null = bendArrow
-    ? bendArrow.pts.length === 3 && !bendArrow.ctrl ? bendArrow.pts[1] : along(arrowCurve(bendArrow, step, next), 0.5)
-    : null;
+  // a run tapped in edit mode shows points along it to reshape it
+  const bendArrow = mode === "edit" && !playing && selArrow && (tool === "move" || tool === "run")
+    ? step.arrows.find(a => a.id === selArrow && a.kind !== "pass") : undefined;
+  const handles: Pt[] = draft?.kind === "bend" ? draft.handles : bendArrow ? runHandles(bendArrow, step, next) : [];
   const shownNext = anim ? steps[anim.from + 1] : next;
   const animFrom = anim ? anim.from : -1;
   const animPlan = useMemo(() => (animFrom >= 0 && steps[animFrom + 1] ? plan(steps[animFrom], steps[animFrom + 1]) : null), [animFrom, steps]);
@@ -429,12 +451,22 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     const ball = ballPoint(step.ball, pos);
     let d: Drag | null = null;
 
-    if (bendArrow && bendPt && bendArrow.piece && dist(p, bendPt) < 1.6) {
-      d = { kind: "bend", arrow: bendArrow.id, piece: bendArrow.piece };
+    const hi = handles.findIndex(h => dist(p, h) < 1.4);
+    const tapped = (tool === "move" || tool === "run") && !(nearestPiece(visible, pos, p, 1.8))
+      ? step.arrows.find(a => a.kind !== "pass" && arrowCurve(a, step, next).some(q => dist(p, q) < 1.2)) : undefined;
+    if (bendArrow?.piece && hi >= 0) {
+      d = { kind: "bend", arrow: bendArrow.id, piece: bendArrow.piece, index: hi, handles };
+    } else if (tapped) {
+      setSelArrow(tapped.id); // tap a run: show its points
+      return;
     } else if (tool === "move") {
       // the ball can't be dragged: it follows its holder and only moves with a pass
       const id = nearestPiece(visible, pos, p, REACH);
-      if (id) { d = { kind: "piece", id }; setSel(id); }
+      setSelArrow(null);
+      if (id && kk > 0 && skatedBefore(steps, kk, id)) {
+        setSel(id);
+        setNotice(`${labelOf(id)} har åkt i ett tidigare steg och står där åkningen slutade. Flytta hen med Åkning.`);
+      } else if (id) { d = { kind: "piece", id }; setSel(id); setNotice(null); }
       else setSel(null);
     } else if (tool === "run") {
       const id = nearestPiece(visible, pos, p, REACH);
@@ -458,7 +490,6 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* synthetic or stale pointer */ }
     if (d.kind !== "stroke") snapshot();
     dragRef.current = d;
-    pieceMoved.current = false;
     setDraft(d);
   };
 
@@ -467,13 +498,17 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     if (!d) return;
     const p: Pt = [clamp(toWorld(e)[0], -1, L + 1), clamp(toWorld(e)[1], 0, W)];
     if (d.kind === "piece") {
-      pieceMoved.current = true;
-      setSteps(s => movePiece(s, kk, d.id, { x: p[0], y: p[1] }));
+      // placed from step 1, so he never jumps between steps
+      setSteps(s => placeFromStart(s, d.id, { x: p[0], y: p[1] }));
     } else if (d.kind === "bend") {
-      // the run now goes through the handle: start, handle, end
+      // the run goes through all its points; only the dragged one moves
+      const hs = d.handles.map((h, j) => (j === d.index ? p : h));
+      const nd = { ...d, handles: hs };
+      dragRef.current = nd;
+      setDraft(nd);
       setSteps(s => s.map((st, i) => (i !== kk ? st : {
         ...st,
-        arrows: st.arrows.map(a => (a.id !== d.arrow ? a : { id: a.id, kind: a.kind, piece: a.piece, pts: [a.pts[0], p, a.pts[a.pts.length - 1]] })),
+        arrows: st.arrows.map(a => (a.id !== d.arrow ? a : { id: a.id, kind: a.kind, piece: a.piece, pts: [a.pts[0], ...hs, a.pts[a.pts.length - 1]] })),
       })));
     } else if (d.kind === "dir") {
       const q = lineSteps(dataRef.current, line)[kk].pos[d.id];
@@ -502,16 +537,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
       });
       return;
     }
-    if (d.kind === "piece") {
-      if (!pieceMoved.current) return; // a tap selects, it doesn't turn him
-      pieceMoved.current = false;
-      // a player moved to a new end of his run faces the way the run ends
-      setSteps(s => {
-        const dir = runEndDir(s, kk, d.id);
-        return dir === null ? s : movePiece(s, kk, d.id, { dir });
-      });
-      return;
-    }
+    if (d.kind === "piece") return;
     if (d.kind !== "stroke") return;
     let len = 0;
     for (let i = 1; i < d.pts.length; i++) len += dist(d.pts[i - 1], d.pts[i]);
@@ -525,7 +551,6 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     const curve = spline(way);
     const end = way[way.length - 1];
     const endDir = Math.round(heading(curve[Math.max(0, curve.length - 3)], end));
-    if (d.piece) setSel(d.piece); // shows the handle to bend his new run
     commitLine((cur, doc) => {
       // steps are only made with "+ Steg"; an arrow in the last step waits for it
       let s = cur.slice();
@@ -758,14 +783,14 @@ export default function Editor({ initial, readOnly = false, shared = false, role
         <div className="update conflict" role="alert">
           <span>Spelet har sparats från en annan enhet. Dina senaste ändringar är inte sparade.</span>
           <button type="button" className="update-go" onClick={() => { void saveNow(true); }}>Spara min version</button>
-          <button type="button" className="update-alt" onClick={() => { dirty.current = false; location.reload(); }}>Hämta den andra</button>
+          <button type="button" className="update-alt" onClick={() => { acked.current = shown.current; location.reload(); }}>Hämta den andra</button>
         </div>
       )}
       <header className="top">
         <div className="title">
-          {present ? <Link className="back" href={`/spel/${initial.id}`}>← Avsluta presentation</Link>
+          {present ? <Link className="back" href={`/spel/${initial.id}`} onClick={leave}>← Avsluta presentation</Link>
             : shared ? <span className="kicker">{roleId ? `Din roll: ${NAMES[role!] ?? role}` : "Delat spel"}</span>
-            : <Link className="back" href="/">← Mina spel</Link>}
+            : <Link className="back" href="/" onClick={leave}>← Mina spel</Link>}
           <input className="name" value={name} onChange={e => setName(e.target.value)} aria-label="Spelets namn" maxLength={80} readOnly={readOnly || mode === "play"} />
         </div>
         {present && (
@@ -909,7 +934,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
             </g>
             <circle className="ball" cx={frame.ball[0]} cy={frame.ball[1]} r={0.6} />
             {ghostBall && !hideArrows && <circle className="ball ghost" cx={ghostBall[0]} cy={ghostBall[1]} r={0.6} />}
-            {bendPt && !hideArrows && <circle className="bend" cx={bendPt[0]} cy={bendPt[1]} r={0.8} />}
+            {!hideArrows && handles.map((h, i) => <circle key={i} className="bend" cx={h[0]} cy={h[1]} r={0.7} />)}
           </g>
         </svg>
       </figure>
@@ -948,11 +973,12 @@ export default function Editor({ initial, readOnly = false, shared = false, role
             <h2 className="sec-h">Verktyg</h2>
             <nav className="tools" aria-label="Verktyg">
               {TOOLS.map(t => (
-                <button key={t.id} type="button" aria-pressed={tool === t.id} className={"tool tool-" + t.id} title={t.hint} onClick={() => setTool(t.id)} disabled={playing}>
+                <button key={t.id} type="button" aria-pressed={tool === t.id} className={"tool tool-" + t.id} title={t.hint} onClick={() => { setTool(t.id); setNotice(null); }} disabled={playing}>
                   {t.label}
                 </button>
               ))}
             </nav>
+            {notice && <p className="hint notice" role="status">{notice}</p>}
           </section>
         )}
 
@@ -992,7 +1018,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
           {mode === "edit" && (
             <div className="bar small">
               <button className="tg" type="button" onClick={addStep} disabled={playing || (line !== null && kk < own)}>+ Steg</button>
-              <button className="tg" type="button" onClick={removeStep} disabled={playing || steps.length < 2 || (line !== null && kk <= own)}>Ta bort steg</button>
+              <button className="tg" type="button" onClick={removeStep} disabled={playing || steps.length < 2 || kk !== steps.length - 1 || (line !== null && kk <= own)} title="Bara det sista steget kan tas bort, eftersom varje steg bygger på det före.">Ta bort sista steget</button>
             </div>
           )}
           {holder && !hideArrows && <span className="holder">Bollen: {holder.label ? NAMES[holder.label] ?? holder.label : "motståndare"}</span>}
@@ -1034,7 +1060,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
               )}
               {!readOnly && mode === "play" && (
                 <div className="more-row">
-                  <Link className="btn" href={`/presentera/${initial.id}`}>Presentera på tv</Link>
+                  <Link className="btn" href={`/presentera/${initial.id}`} onClick={leave}>Presentera på tv</Link>
                   <span className="more-note">Helskärm för tv/projektor, styrs med tangentbord, klickare eller mobilen.</span>
                 </div>
               )}

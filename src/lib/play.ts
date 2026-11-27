@@ -79,6 +79,37 @@ export function passOrigin(step: Step, next: Step | undefined): Pt {
   return carried({ x: p[0], y: p[1], dir: heading(o, q) });
 }
 
+/* ---------- the play is built in order, from step 1 ----------
+   Nobody teleports: a player stands where his runs took him. Only someone who hasn't
+   skated yet can be placed, and then from step 1 up to his first run. */
+
+/** Has the player skated (or dribbled) in a step before k? Then only runs move him. */
+export function skatedBefore(steps: Step[], k: number, id: string): boolean {
+  return steps.slice(0, k).some(s => s.arrows.some(a => a.kind !== "pass" && a.piece === id));
+}
+
+/** Place a player from step 1 up to and including the step where he first skates. */
+export function placeFromStart(steps: Step[], id: string, to: { x: number; y: number }): Step[] {
+  const out = steps.slice();
+  for (let j = 0; j < out.length; j++) {
+    const cur = out[j].pos[id];
+    if (!cur) break;
+    out[j] = { ...out[j], pos: { ...out[j].pos, [id]: { ...cur, x: to.x, y: to.y } } };
+    if (out[j].arrows.some(a => a.kind !== "pass" && a.piece === id)) break;
+  }
+  return out;
+}
+
+/** Points to reshape a run with: its own waypoints when it has a few, otherwise points
+    spread along the curve (one per ~6 m), so moving one keeps the rest of the run as drawn. */
+export function runHandles(a: Arrow, step: Step, next: Step | undefined): Pt[] {
+  const inner = a.ctrl ? [] : a.pts.slice(1, -1);
+  if (inner.length >= 1 && inner.length <= 8) return inner;
+  const curve = arrowCurve(a, step, next);
+  const k = clamp(Math.round(polyLength(curve) / 6), 1, 8);
+  return Array.from({ length: k }, (_, i) => along(curve, (i + 1) / (k + 1)));
+}
+
 /** The ball holder's run in a step, if he skates (dribbles). */
 export const holderRun = (step: Step) => (step.ball.holder ? moveArrow(step, step.ball.holder) : undefined);
 
@@ -242,13 +273,4 @@ export function movePiece(steps: Step[], k: number, id: string, to: Partial<Pos>
     out[j] = { ...out[j], pos: { ...out[j].pos, [id]: { ...cur, ...to } } };
   }
   return out;
-}
-
-export function isPlayData(d: unknown): d is PlayData {
-  if (!d || typeof d !== "object") return false;
-  const o = d as PlayData;
-  const variantsOk = o.variants === undefined || (Array.isArray(o.variants) && o.variants.length <= 20 &&
-    o.variants.every(v => v && typeof v.id === "string" && typeof v.name === "string" && Number.isInteger(v.from) &&
-      v.from >= 0 && v.from < o.steps.length && Array.isArray(v.steps) && v.steps.length > 0 && v.steps.length <= 200));
-  return Array.isArray(o.pieces) && Array.isArray(o.steps) && o.steps.length > 0 && o.steps.length <= 200 && o.pieces.length <= 60 && variantsOk;
 }

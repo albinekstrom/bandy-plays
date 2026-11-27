@@ -496,3 +496,4 @@ select.field{appearance:auto}
   .editor .top .title{flex:1 1 100%}
   .editor .top .bar{flex:1 1 100%;justify-content:flex-start;flex-wrap:wrap}
 }
+.notice{padding:6px 10px;border-left:4px solid var(--rosa);background:var(--frost);color:var(--natt)}
