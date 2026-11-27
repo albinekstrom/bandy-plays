@@ -985,6 +985,8 @@ export default function Editor({ initial, readOnly = false, role, present = fals
           viewer={viewer}
           k={kk}
           count={steps.length}
+          steps={steps}
+          speed={speed}
           onStep={i => setK(clamp(i, 0, steps.length - 1))}
           onClose={() => setShow3d(false)}
         />
