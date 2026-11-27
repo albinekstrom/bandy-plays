@@ -33,6 +33,8 @@ export interface Arrow {
   piece: string | null;
   pts: Pt[];
   ctrl?: Pt | null;
+  /** A pass lifted over the players (lyra) instead of along the ice. */
+  lob?: boolean;
 }
 
 export interface Step {
@@ -67,6 +69,8 @@ export interface Play extends PlayData {
   id: string;
   name: string;
   updatedAt: string;
+  /** Counts saves; a save names the revision it builds on so it can't overwrite a newer one. */
+  revision?: number;
   shareToken?: string | null; // only sent to the owner
   tags?: string[]; // kept outside the editor's data so autosave can't wipe them
 }

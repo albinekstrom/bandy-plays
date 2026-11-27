@@ -22,7 +22,7 @@ const OVERLAY = 1; // layer for labels and rings: the ice mirror's camera doesn'
 type Status = "clear" | "partial" | "hidden";
 interface Edge { id: string; label: string; x: number; y: number; angle: number }
 interface Hud { edges: Edge[]; hidden: number; partial: number }
-interface Pose { pos: Record<string, Pos>; ball: Pt; holder: string | null }
+interface Pose { pos: Record<string, Pos>; ball: Pt; holder: string | null; lift?: number }
 interface Playback { idx: number; t: number; plan: Plan; all: boolean; hold: number; running: boolean }
 
 export type CamMode = "eyes" | "stand" | "goal" | "top";
@@ -240,7 +240,7 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
         if (p.rings) { p.rings[0].position.copy(p.chest); p.rings[1].position.copy(p.chest); }
         p.sk.setHolder(pose.holder === p.id);
       }
-      ball.position.set(pose.ball[0], 0.08, pose.ball[1]);
+      ball.position.set(pose.ball[0], 0.08 + (pose.lift ?? 0) * 3, pose.ball[1]); // a lob flies up to ~3 m
       // rings for teammates hidden behind someone: only from his eyes
       sight = eyes ? sightlines(pieces, pose.pos, viewer) : null;
       for (const p of mates) {
@@ -412,7 +412,7 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
       const end = still || pl.t >= pl.plan.T; // reduced motion: straight to the end of the step
       const t = end ? pl.plan.T : pl.t;
       const f = frameAt(pl.plan, t);
-      poseRef.current = { pos: f.pos, ball: f.ball, holder: holderAt(pl.plan, t) };
+      poseRef.current = { pos: f.pos, ball: f.ball, holder: holderAt(pl.plan, t), lift: f.lift };
       apply();
       if (!end) return;
       const next = pl.idx + 1, all = live.current.steps;

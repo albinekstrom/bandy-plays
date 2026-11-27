@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Barlow_Condensed, Inter } from "next/font/google";
 import "./globals.css";
+import UpdateNotice from "@/components/UpdateNotice";
 
 const head = Barlow_Condensed({ variable: "--font-head", weight: ["700", "800"], subsets: ["latin"] });
 const body = Inter({ variable: "--font-body", weight: ["400", "600"], subsets: ["latin"] });
@@ -21,7 +22,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="sv" className={`${head.variable} ${body.variable}`}>
-      <body>{children}</body>
+      <body>
+        {children}
+        <UpdateNotice />
+      </body>
     </html>
   );
 }

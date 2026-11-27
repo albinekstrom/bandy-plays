@@ -5,12 +5,14 @@ import { neon } from "@neondatabase/serverless";
 import { join } from "node:path";
 import { readJson, writeJson, locked } from "./jsonfile";
 import type { Play, PlayData, PlaySummary } from "./types";
+import { upgrade } from "./schema";
 
 export interface PlayStore {
   list(): Promise<PlaySummary[]>;
   get(id: string): Promise<Play | null>;
   create(name: string, data: PlayData): Promise<Play>;
-  update(id: string, name: string, data: PlayData): Promise<Play | null>;
+  /** rev: the revision the edit builds on; if the play was saved since, nothing is written ("conflict"). */
+  update(id: string, name: string, data: PlayData, rev?: number): Promise<Play | null | "conflict">;
   remove(id: string): Promise<void>;
   /** Set (token) or revoke (null) the read-only share link. */
   share(id: string, token: string | null): Promise<void>;
@@ -31,7 +33,8 @@ const fileStore: PlayStore = {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   },
   async get(id) {
-    return (await readAll()).find(p => p.id === id) ?? null;
+    const p = (await readAll()).find(x => x.id === id);
+    return p ? { ...p, ...upgrade(p) } : null;
   },
   async create(name, data) {
     return locked(FILE, async () => {
@@ -42,12 +45,14 @@ const fileStore: PlayStore = {
       return play;
     });
   },
-  async update(id, name, data) {
+  async update(id, name, data, rev) {
     return locked(FILE, async () => {
       const plays = await readAll();
       const i = plays.findIndex(p => p.id === id);
       if (i < 0) return null;
-      plays[i] = { ...plays[i], id, name, updatedAt: new Date().toISOString(), ...data };
+      const cur = plays[i].revision ?? 0;
+      if (rev !== undefined && rev !== cur) return "conflict";
+      plays[i] = { ...plays[i], ...data, id, name, updatedAt: new Date().toISOString(), revision: cur + 1 };
       await writeAll(plays);
       return plays[i];
     });
@@ -65,7 +70,8 @@ const fileStore: PlayStore = {
     });
   },
   async byShare(token) {
-    const p = (await readAll()).find(x => x.shareToken === token);
+    const found = (await readAll()).find(x => x.shareToken === token);
+    const p = found ? { ...found, ...upgrade(found) } : undefined;
     return p ? { ...p, shareToken: undefined } : null;
   },
   async setTags(id, tags) {
@@ -94,11 +100,12 @@ function neonStore(url: string): PlayStore {
       )`;
     await sql`ALTER TABLE plays ADD COLUMN IF NOT EXISTS share_token text`;
     await sql`ALTER TABLE plays ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{}'`;
+    await sql`ALTER TABLE plays ADD COLUMN IF NOT EXISTS revision integer NOT NULL DEFAULT 0`;
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS plays_share_token ON plays (share_token)`;
   })().catch(e => { ready = null; throw e; }));
 
-  type Row = { id: string; name: string; data: PlayData; updated_at: string | Date; share_token?: string | null; tags?: string[] | null };
-  const toPlay = (r: Row): Play => ({ id: r.id, name: r.name, updatedAt: new Date(r.updated_at).toISOString(), shareToken: r.share_token ?? null, tags: r.tags ?? [], ...r.data });
+  type Row = { id: string; name: string; data: PlayData; updated_at: string | Date; revision?: number | null; share_token?: string | null; tags?: string[] | null };
+  const toPlay = (r: Row): Play => ({ ...upgrade(r.data), id: r.id, name: r.name, updatedAt: new Date(r.updated_at).toISOString(), revision: r.revision ?? 0, shareToken: r.share_token ?? null, tags: r.tags ?? [] });
   const isUuid = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
   return {
@@ -120,13 +127,18 @@ function neonStore(url: string): PlayStore {
         RETURNING *`) as Row[];
       return toPlay(rows[0]);
     },
-    async update(id, name, data) {
+    async update(id, name, data, rev) {
       if (!isUuid(id)) return null;
       await init();
+      // data || new: keys an older app version doesn't send are kept
+      const r = rev ?? null;
       const rows = (await sql`
-        UPDATE plays SET name = ${name}, data = ${JSON.stringify(data)}::jsonb, updated_at = now()
-        WHERE id = ${id} RETURNING *`) as Row[];
-      return rows[0] ? toPlay(rows[0]) : null;
+        UPDATE plays SET name = ${name}, data = data || ${JSON.stringify(data)}::jsonb, updated_at = now(), revision = revision + 1
+        WHERE id = ${id} AND (${r}::int IS NULL OR revision = ${r}::int)
+        RETURNING *`) as Row[];
+      if (rows[0]) return toPlay(rows[0]);
+      const exists = (await sql`SELECT 1 FROM plays WHERE id = ${id}`) as unknown[];
+      return exists.length ? "conflict" : null;
     },
     async remove(id) {
       if (!isUuid(id)) return;

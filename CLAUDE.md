@@ -32,3 +32,15 @@ Read `AGENTS.md` first: this is Next.js 16 (App Router, `proxy.ts` instead of mi
 - Never point local dev at the production database to experiment; use the file store or a Neon branch.
 - Test motion/geometry with small `npx tsx` scripts against `src/lib/*`; check UI in a browser at desktop and 390 px phone width.
 - Pushing to `main` deploys to Vercel (functions pinned to `fra1`, next to the Neon database).
+- Changes that touch stored data (play format, tables, columns) must be safe for the live database:
+  - additive only (new optional fields, `ADD COLUMN IF NOT EXISTS`), never rename or drop;
+  - old open tabs keep saving after a deploy, so the server must accept the old format and new code must read old plays;
+  - test against a Neon branch first, and make a backup branch of production in Neon right before deploying.
+  - the play format is versioned in `src/lib/schema.ts` (like a pydantic model): bump `SCHEMA_VERSION` and add one migration from the previous version; never edit or remove old migrations. Plays are upgraded when read and only rewritten when someone saves.
+  - unknown fields are kept everywhere (editor state, PUT, and `data || new` in SQL), so an older app version never drops what a newer one wrote.
+  - opening or watching a play must never write to it: the editor only saves real changes.
+- Saves carry `rev` (the play's `revision` the editor built on; the column is bumped on every save); the API answers 409 instead of overwriting a newer save. Tabs from before revisions send no `rev` and simply save. Keep that.
+- The editor saves one request at a time and compares what it shows with what the server confirmed after each response; every way out (app links, "Ladda om", closing the tab) saves first.
+- Saves are validated at every level by `parsePlayData` (`src/lib/schema.ts`), which accepts older optional fields and keeps unknown ones.
+- Plays are built in order from step 1 and nobody teleports: a player stands where his runs took him. Only a player who hasn't skated yet can be dragged, and then from step 1 up to his first run (`placeFromStart`). New steps come only from "+ Steg" (`stepAfter`), and only the last step can be removed.
+- Local dev without login: `DEV_NO_LOGIN=1` in `.env.local` (`src/lib/session.ts`). Only works in `npm run dev` with the file store; never add it on Vercel.

@@ -3,8 +3,8 @@
    with MediaRecorder. Browser only. */
 import type { Arrow, Piece, Pos, Pt, Step } from "./types";
 import { L, W, MIDY } from "./rink";
-import { arrowCurve, frameAt, plan, stillFrame, type Frame, type Plan } from "./play";
-import { clamp, wavy } from "./geom";
+import { arrowCurve, arrowKind, frameAt, plan, stillFrame, type Frame, type Plan } from "./play";
+import { clamp } from "./geom";
 
 export interface VideoOpts {
   name: string;
@@ -280,15 +280,15 @@ function drawArrows(sc: Scene, step: Step, next: Step | undefined, alpha: number
     if (a.piece && !sc.showThem && sc.side[a.piece] === "them") continue;
     const pts = arrowCurve(a, step, next);
     if (pts.length < 2) continue;
-    const color = a.kind === "pass" ? C.rosa : C.bla;
+    const kind = arrowKind(a, step);
+    const color = kind === "run" ? C.bla : C.rosa;
     ctx.strokeStyle = color;
-    ctx.globalAlpha = alpha * (a.kind === "run" ? 0.8 : 1);
-    if (a.kind === "pass") { ctx.lineWidth = 0.35; ctx.setLineDash([0.1, 0.9]); }
-    else { ctx.lineWidth = a.kind === "drib" ? 0.4 : 0.3; ctx.setLineDash([]); }
-    const drawn = a.kind === "drib" ? wavy(pts) : pts;
-    polyline(ctx, drawn);
+    ctx.globalAlpha = alpha * (kind === "run" ? 0.8 : 1);
+    if (kind === "pass") { ctx.lineWidth = 0.35; ctx.setLineDash(a.lob ? [1.2, 0.8] : [0.1, 0.9]); }
+    else { ctx.lineWidth = kind === "drib" ? 0.4 : 0.3; ctx.setLineDash([]); }
+    polyline(ctx, pts);
     ctx.setLineDash([]);
-    arrowHead(ctx, drawn, color);
+    arrowHead(ctx, pts, color);
   }
   ctx.globalAlpha = 1;
 }
@@ -324,11 +324,17 @@ function drawPieces(sc: Scene, pos: Record<string, Pos>, holder: string | null) 
   }
 }
 
-function drawBall(sc: Scene, b: Pt) {
+function drawBall(sc: Scene, b: Pt, lift = 0) {
   const { ctx } = sc;
   toWorld(sc);
+  if (lift > 0) { // a lob: shadow on the ice, the ball above it and bigger
+    ctx.beginPath();
+    ctx.arc(b[0], b[1], 0.5, 0, 2 * Math.PI);
+    ctx.fillStyle = "rgba(15,27,42,.25)";
+    ctx.fill();
+  }
   ctx.beginPath();
-  ctx.arc(b[0], b[1], 0.6, 0, 2 * Math.PI);
+  ctx.arc(b[0], b[1] - lift * 1.5, 0.6 * (1 + 0.8 * lift), 0, 2 * Math.PI);
   ctx.fillStyle = C.rosa;
   ctx.fill();
   ctx.strokeStyle = "#fff";
@@ -469,7 +475,7 @@ function drawScene(sc: Scene, k: number, frame: Frame, arrowAlpha: number) {
   drawRink(sc);
   drawArrows(sc, sc.steps[k], sc.steps[k + 1], arrowAlpha);
   drawPieces(sc, frame.pos, sc.steps[k].ball.holder);
-  drawBall(sc, frame.ball);
+  drawBall(sc, frame.ball, frame.lift ?? 0);
   drawHeader(sc, k);
   drawCaption(sc, k);
 }

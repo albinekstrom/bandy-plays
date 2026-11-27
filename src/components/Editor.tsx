@@ -3,15 +3,18 @@
    Play mode also has branch choices, a quiz, passing lanes and the 3D view;
    readOnly (a shared link) is play mode only, without saving. */
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { onFlush } from "@/lib/unsaved";
+import { dataOf } from "@/lib/schema";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Arrow, ArrowKind, Play, PlayData, Pt, Step, Variant } from "@/lib/types";
+import type { Arrow, ArrowKind, Play, PlayData, Pt, Step } from "@/lib/types";
 import { L, W, MIDY, NAMES } from "@/lib/rink";
-import { clamp, dist, fitStroke, heading, pathD, spline, wavy } from "@/lib/geom";
+import { clamp, dist, fitStroke, heading, pathD, spline } from "@/lib/geom";
 import {
-  arrowCurve, ballPoint, copyStep, frameAt, movePiece, nearestPiece, plan, stillFrame, uid, type Frame,
+  arrowCurve, arrowKind, ballPoint, endState, holderRun, passOrigin, runHandles, frameAt, movePiece, nearestPiece, placeFromStart, plan, runEndDir, skatedBefore, stepAfter, stillFrame, uid, type Frame,
 } from "@/lib/play";
-import { choicesAt, everyStep, lineName, lineSteps, ownFrom, receiverAt, writeLine, MAIN_NAME, type Line } from "@/lib/lines";
+import { choicesAt, everyStep, lineName, lineSteps, ownFrom, receiverAt, writeLine, type Line } from "@/lib/lines";
 import { laneStatus, type Lane } from "@/lib/lanes";
 import { autoPlace } from "@/lib/auto";
 import { spaceControl, CELL } from "@/lib/space";
@@ -23,13 +26,13 @@ import type { ScreenState } from "./RemoteControl";
 const View3D = dynamic(() => import("./View3D"), { ssr: false });
 const VideoExport = dynamic(() => import("./VideoExport"), { ssr: false });
 
-type Tool = "move" | "run" | "drib" | "pass" | "dir" | "erase";
+type Tool = "move" | "run" | "pass" | "lob" | "dir" | "erase";
 type Mode = "play" | "edit";
 const TOOLS: { id: Tool; label: string; hint: string }[] = [
-  { id: "move", label: "Flytta", hint: "Dra spelare eller boll. Släpp bollen vid en spelare så får hen den." },
-  { id: "run", label: "Åkning", hint: "Dra från en spelare dit hen ska åka." },
-  { id: "drib", label: "Driver", hint: "Dra från bollhållaren dit hen driver bollen." },
-  { id: "pass", label: "Pass", hint: "Dra från bollen till mottagaren." },
+  { id: "move", label: "Flytta", hint: "Dra en spelare. Bollen följer bollföraren och flyttas bara med Pass." },
+  { id: "run", label: "Åkning", hint: "Dra från en spelare dit hen ska åka. Bollföraren driver bollen (rosa linje). Dra i punkten på linjen för att böja den." },
+  { id: "pass", label: "Pass", hint: "Dra från bollen till en medspelare. Passet går i rak linje längs isen." },
+  { id: "lob", label: "Lyra", hint: "Dra från bollen till en medspelare. Bollen lyfts i rak linje över spelarna." },
   { id: "dir", label: "Riktning", hint: "Dra från en spelare åt det håll hen ska titta." },
   { id: "erase", label: "Sudda", hint: "Tryck på en pil eller en motståndare för att ta bort den." },
 ];
@@ -37,11 +40,11 @@ const REACH = 3.2; // metres: generous for fingers
 
 type Drag =
   | { kind: "piece"; id: string }
-  | { kind: "ball" }
   | { kind: "dir"; id: string }
-  | { kind: "stroke"; arrow: ArrowKind; piece: string | null; pts: Pt[] };
+  | { kind: "bend"; arrow: string; piece: string; index: number; handles: Pt[] }
+  | { kind: "stroke"; arrow: ArrowKind; piece: string | null; pts: Pt[]; after?: boolean; lob?: boolean };
 
-type Save = "saved" | "saving" | "dirty" | "error";
+type Save = "saved" | "saving" | "dirty" | "error" | "conflict";
 type PlayOpts = { line?: Line; skipAsk?: number; onDone?: () => void };
 interface Choice { k: number; sub: string; options: { line: Line; name: string; badge: string | null }[]; pick: (l: Line) => void }
 interface Quiz {
@@ -58,7 +61,8 @@ export default function Editor({ initial, readOnly = false, shared = false, role
   present?: boolean; // presentation mode: big screen, keyboard/clicker and phone remote
 }) {
   const [name, setName] = useState(initial.name);
-  const [data, setData] = useState<PlayData>({ pieces: initial.pieces, steps: initial.steps, variants: initial.variants ?? [] });
+  // all of the play's data, fields this version doesn't know included, so saving never drops them
+  const [data, setData] = useState<PlayData>(() => ({ ...dataOf(initial as unknown as Record<string, unknown>), variants: initial.variants ?? [] }));
   const [past, setPast] = useState<PlayData[]>([]);
   const [line, setLine] = useState<Line>(null);
   const [k, setK] = useState(0);
@@ -83,7 +87,9 @@ export default function Editor({ initial, readOnly = false, shared = false, role
   const [more, setMore] = useState(false);
   const [video, setVideo] = useState(false);
   const [autoOpts, setAutoOpts] = useState({ us: true, them: true });
-  const [sel, setSel] = useState<string | null>(null); // player picked in edit mode (for his task)
+  const [sel, setSel] = useState<string | null>(null);
+  const [selArrow, setSelArrow] = useState<string | null>(null); // run tapped to reshape
+  const [notice, setNotice] = useState<string | null>(null); // why something can't be done // player picked in edit mode (for his task)
   const lastTap = useRef<{ id: string; at: number } | null>(null);
   const quizTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -132,24 +138,98 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     setK(x => Math.min(x, lineSteps(prev, ln).length - 1));
   }, [past]);
 
-  /* ---------- autosave ---------- */
-  const first = useRef(true);
+  /* ---------- autosave ----------
+     One request at a time. `acked` is what the server has confirmed and `shown` is what
+     the editor shows; after every response they are compared again, so a change made while
+     a save was in flight (an undo back to the saved state included) is always saved too.
+     Each save names the revision it builds on: if someone else saved in between, the
+     server answers 409, nothing is overwritten and the coach picks a version. */
+  const shown = useRef("");
+  const acked = useRef<string | null>(null); // set to the play as loaded: what the server has, so opening never writes
+  const revRef = useRef(initial.revision ?? 0);
+  const inFlight = useRef<Promise<void> | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const conflict = useRef(false);
+  const failed = useRef(false);
+  const unsaved = useCallback(() => acked.current !== null && (shown.current !== acked.current || inFlight.current !== null), []);
+  const status = useCallback((): Save => (conflict.current ? "conflict" : failed.current ? "error"
+    : inFlight.current ? "saving" : shown.current !== acked.current ? "dirty" : "saved"), []);
+
+  /** Save until the server has what the editor shows; resolves when idle. force: overwrite after a conflict. */
+  const saveNow = useCallback((force = false): Promise<void> => {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    if (inFlight.current) return inFlight.current; // it checks the draft again when it's done
+    if ((conflict.current && !force) || shown.current === acked.current) { setSave(status()); return Promise.resolve(); }
+    const run = (async () => {
+      let overwrite = force;
+      while (shown.current !== acked.current && (!conflict.current || overwrite)) {
+        const sent = shown.current;
+        setSave("saving");
+        try {
+          const res = await fetch(`/api/plays/${initial.id}`, {
+            method: "PUT", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ...JSON.parse(sent), rev: overwrite ? undefined : revRef.current }),
+          });
+          if (res.status === 409) { conflict.current = true; break; }
+          if (!res.ok) { failed.current = true; break; }
+          revRef.current = ((await res.json()) as { revision: number }).revision;
+          acked.current = sent;
+          conflict.current = failed.current = overwrite = false;
+        } catch { failed.current = true; break; }
+      }
+      inFlight.current = null;
+      setSave(status());
+    })();
+    inFlight.current = run;
+    return run;
+  }, [initial.id, status]);
+
   useEffect(() => {
     if (readOnly) return;
-    if (first.current) { first.current = false; return; }
-    setSave("dirty");
-    const t = setTimeout(async () => {
-      setSave("saving");
-      try {
-        const res = await fetch(`/api/plays/${initial.id}`, {
-          method: "PUT", headers: { "content-type": "application/json" }, keepalive: true,
-          body: JSON.stringify({ name, ...data }),
-        });
-        setSave(res.ok ? "saved" : "error");
-      } catch { setSave("error"); }
-    }, 700);
-    return () => clearTimeout(t);
-  }, [name, data, initial.id, readOnly]);
+    shown.current = JSON.stringify({ name, ...data });
+    acked.current ??= shown.current;
+    failed.current = false;
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    if (conflict.current) return; // wait for the coach's choice
+    // back to what the server has (an undo): nothing to save, unless a save is under way (it rechecks)
+    timer.current = setTimeout(() => { void saveNow(); }, shown.current === acked.current ? 0 : 700);
+  }, [name, data, readOnly, saveNow]);
+
+  // every way out saves first: "Ladda om" and links in the app wait for the save loop, closing
+  // the tab asks. The browser's back button stays in the app, so the same save loop simply keeps
+  // running after the editor is gone and finishes with what the coach last saw.
+  const flush = useCallback(async () => { await saveNow(); return !unsaved() && !conflict.current; }, [saveNow, unsaved]);
+  const router = useRouter();
+  const leave = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (readOnly || !unsaved()) return;
+    e.preventDefault();
+    const href = e.currentTarget.getAttribute("href")!;
+    void flush().then(ok => { if (ok) router.push(href); });
+  };
+  useEffect(() => {
+    if (readOnly) return;
+    const off = onFlush(flush);
+    const warn = (e: BeforeUnloadEvent) => { if (unsaved()) e.preventDefault(); };
+    addEventListener("beforeunload", warn);
+    return () => {
+      off();
+      removeEventListener("beforeunload", warn);
+      if (unsaved() || timer.current) void saveNow(); // the one save loop, no second write path
+    };
+  }, [readOnly, flush, unsaved, saveNow]);
+
+  /* ---------- phones are view-only for now: no edit mode ---------- */
+  const [phone, setPhone] = useState(false);
+  useEffect(() => {
+    const mq = matchMedia("(max-width: 700px), (pointer: coarse) and (max-height: 500px)");
+    const on = () => {
+      setPhone(mq.matches);
+      if (mq.matches) setMode("play");
+    };
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
 
   /* ---------- standing rink on narrow portrait screens ---------- */
   useEffect(() => {
@@ -287,6 +367,15 @@ export default function Editor({ initial, readOnly = false, shared = false, role
 
   /* ---------- what to draw ---------- */
   const shownStep = anim ? steps[anim.from] : step;
+  // in edit mode, a faint ball where the dribble takes it: at the end of the run, or where the pass leaves
+  const stepEnd = useMemo(() => (next ? { pos: next.pos, ball: next.ball } : endState(step, data.pieces)), [next, step, data.pieces]);
+  const ghostBall: Pt | null = mode === "edit" && !anim && holderRun(step)
+    ? (next && step.arrows.some(a => a.kind === "pass") ? passOrigin(step, next) : ballPoint({ ...stepEnd.ball, holder: step.ball.holder }, stepEnd.pos))
+    : null;
+  // a run tapped in edit mode shows points along it to reshape it
+  const bendArrow = mode === "edit" && !playing && selArrow && (tool === "move" || tool === "run")
+    ? step.arrows.find(a => a.id === selArrow && a.kind !== "pass") : undefined;
+  const handles: Pt[] = draft?.kind === "bend" ? draft.handles : bendArrow ? runHandles(bendArrow, step, next) : [];
   const shownNext = anim ? steps[anim.from + 1] : next;
   const animFrom = anim ? anim.from : -1;
   const animPlan = useMemo(() => (animFrom >= 0 && steps[animFrom + 1] ? plan(steps[animFrom], steps[animFrom + 1]) : null), [animFrom, steps]);
@@ -359,19 +448,34 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     const ball = ballPoint(step.ball, pos);
     let d: Drag | null = null;
 
-    if (tool === "move") {
-      // whichever is closer to the finger: the ball or a player (the carrier stands right behind the ball)
+    const hi = handles.findIndex(h => dist(p, h) < 1.4);
+    const tapped = (tool === "move" || tool === "run") && !(nearestPiece(visible, pos, p, 1.8))
+      ? step.arrows.find(a => a.kind !== "pass" && arrowCurve(a, step, next).some(q => dist(p, q) < 1.2)) : undefined;
+    if (bendArrow?.piece && hi >= 0) {
+      d = { kind: "bend", arrow: bendArrow.id, piece: bendArrow.piece, index: hi, handles };
+    } else if (tapped) {
+      setSelArrow(tapped.id); // tap a run: show its points
+      return;
+    } else if (tool === "move") {
+      // the ball can't be dragged: it follows its holder and only moves with a pass
       const id = nearestPiece(visible, pos, p, REACH);
-      const toPiece = id ? dist(p, [pos[id].x, pos[id].y]) : Infinity;
-      if (dist(p, ball) < Math.min(1.8, toPiece)) d = { kind: "ball" };
-      else if (id) { d = { kind: "piece", id }; setSel(id); }
+      setSelArrow(null);
+      if (id && kk > 0 && skatedBefore(steps, kk, id)) {
+        setSel(id);
+        setNotice(`${labelOf(id)} har åkt i ett tidigare steg och står där åkningen slutade. Flytta hen med Åkning.`);
+      } else if (id) { d = { kind: "piece", id }; setSel(id); setNotice(null); }
       else setSel(null);
-    } else if (tool === "run" || tool === "drib") {
+    } else if (tool === "run") {
       const id = nearestPiece(visible, pos, p, REACH);
-      if (id) d = { kind: "stroke", arrow: tool, piece: id, pts: [[pos[id].x, pos[id].y]] };
-    } else if (tool === "pass") {
-      const holderNear = step.ball.holder && nearestPiece(visible, pos, p, REACH) === step.ball.holder;
-      if (dist(p, ball) < REACH || holderNear) d = { kind: "stroke", arrow: "pass", piece: null, pts: [ball] };
+      if (id) d = { kind: "stroke", arrow: id === step.ball.holder ? "drib" : "run", piece: id, pts: [[pos[id].x, pos[id].y]] };
+    } else if (tool === "pass" || tool === "lob") {
+      // if players skate in this step, the pass comes after: from where the ball ends up, as an in-between step
+      const after = step.arrows.some(a => a.kind !== "pass");
+      const at = after ? stepEnd.pos : pos;
+      const holder = step.ball.holder;
+      const from = after ? ballPoint({ ...stepEnd.ball, holder }, stepEnd.pos) : ball;
+      const holderNear = holder && nearestPiece(visible, at, p, REACH) === holder;
+      if (dist(p, from) < REACH || holderNear) d = { kind: "stroke", arrow: "pass", piece: null, pts: [from], after, lob: tool === "lob" };
     } else if (tool === "dir") {
       const id = nearestPiece(visible, pos, p, REACH);
       if (id) d = { kind: "dir", id };
@@ -391,9 +495,18 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     if (!d) return;
     const p: Pt = [clamp(toWorld(e)[0], -1, L + 1), clamp(toWorld(e)[1], 0, W)];
     if (d.kind === "piece") {
-      setSteps(s => movePiece(s, kk, d.id, { x: p[0], y: p[1] }));
-    } else if (d.kind === "ball") {
-      setSteps(s => s.map((st, i) => (i === kk ? { ...st, ball: { holder: null, x: p[0], y: p[1] } } : st)));
+      // placed from step 1, so he never jumps between steps
+      setSteps(s => placeFromStart(s, d.id, { x: p[0], y: p[1] }));
+    } else if (d.kind === "bend") {
+      // the run goes through all its points; only the dragged one moves
+      const hs = d.handles.map((h, j) => (j === d.index ? p : h));
+      const nd = { ...d, handles: hs };
+      dragRef.current = nd;
+      setDraft(nd);
+      setSteps(s => s.map((st, i) => (i !== kk ? st : {
+        ...st,
+        arrows: st.arrows.map(a => (a.id !== d.arrow ? a : { id: a.id, kind: a.kind, piece: a.piece, pts: [a.pts[0], ...hs, a.pts[a.pts.length - 1]] })),
+      })));
     } else if (d.kind === "dir") {
       const q = lineSteps(dataRef.current, line)[kk].pos[d.id];
       if (dist(p, [q.x, q.y]) < 0.8) return;
@@ -413,12 +526,15 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     dragRef.current = null;
     setDraft(null);
     if (!d) return;
-    if (d.kind === "ball") {
-      const st = lineSteps(dataRef.current, line)[kk];
-      const holder = nearestPiece(visible, st.pos, [st.ball.x, st.ball.y], 2.5);
-      if (holder) setSteps(s => s.map((x, i) => (i === kk ? { ...x, ball: { ...x.ball, holder } } : x)));
+    if (d.kind === "bend") {
+      // he faces the way the bent run now ends
+      setSteps(s => {
+        const dir = runEndDir(s, kk + 1, d.piece);
+        return dir === null || !s[kk + 1] ? s : movePiece(s, kk + 1, d.piece, { dir });
+      });
       return;
     }
+    if (d.kind === "piece") return;
     if (d.kind !== "stroke") return;
     let len = 0;
     for (let i = 1; i < d.pts.length; i++) len += dist(d.pts[i - 1], d.pts[i]);
@@ -427,30 +543,39 @@ export default function Editor({ initial, readOnly = false, shared = false, role
   };
 
   function finishStroke(d: Extract<Drag, { kind: "stroke" }>) {
+    // a pass always reaches a teammate, in a straight line to where he is when it's played
+    let rec: string | null = null;
+    if (d.arrow === "pass") {
+      const holder = step.ball.holder;
+      rec = nearestPiece(visible.filter(x => x.side === "us" && x.id !== holder), stepEnd.pos, d.pts[d.pts.length - 1], REACH);
+      if (!rec) { setNotice("En passning måste gå fram till en medspelare. Släpp den på spelaren."); return; }
+      setNotice(null);
+    }
     // passes fly straight; runs follow the drawn curve, smoothed
-    const way = d.arrow === "pass" ? [d.pts[0], d.pts[d.pts.length - 1]] : fitStroke(d.pts);
+    const way: Pt[] = d.arrow === "pass" && rec ? [d.pts[0], [stepEnd.pos[rec].x, stepEnd.pos[rec].y]] : fitStroke(d.pts);
     const curve = spline(way);
     const end = way[way.length - 1];
     const endDir = Math.round(heading(curve[Math.max(0, curve.length - 3)], end));
-    commitLine((cur, doc) => {
+    commitLine(cur => {
+      // steps are only made with "+ Steg"; an arrow in the last step waits for it
       let s = cur.slice();
-      if (!s[kk + 1]) s.splice(kk + 1, 0, copyStep(s[kk]));
-      const arrow: Arrow = { id: uid(), kind: d.arrow, piece: d.piece, pts: way };
+      const arrow: Arrow = { id: uid(), kind: d.arrow, piece: d.piece, pts: way, ...(d.lob ? { lob: true } : {}) };
       // one movement per player (and one pass) per step: a new stroke replaces the old
       const keep = s[kk].arrows.filter(a => (d.arrow === "pass" ? a.kind !== "pass" : a.piece !== d.piece));
       s[kk] = { ...s[kk], arrows: [...keep, arrow] };
 
       if (d.arrow === "pass") {
-        const rec = nearestPiece(doc.pieces, s[kk + 1].pos, end, REACH);
-        s[kk + 1] = { ...s[kk + 1], ball: rec ? { holder: rec, x: end[0], y: end[1] } : { holder: null, x: end[0], y: end[1] } };
-        if (s[kk].ball.holder) {
-          // the passer faces the pass
+        // after the runs of this step, the ball goes from where it ended up
+        if (d.after) s[kk] = { ...s[kk], passAt: 1 };
+        if (s[kk + 1]) s[kk + 1] = { ...s[kk + 1], ball: { holder: rec, x: end[0], y: end[1] } };
+        if (s[kk].ball.holder && !d.after) {
+          // a passer standing still faces the pass
           s = movePiece(s, kk, s[kk].ball.holder, { dir: endDir });
         }
       } else if (d.piece) {
-        s = movePiece(s, kk + 1, d.piece, { x: end[0], y: end[1], dir: endDir });
-        if (d.arrow === "drib" || s[kk].ball.holder === d.piece) {
-          s[kk] = { ...s[kk], ball: { ...s[kk].ball, holder: d.piece } };
+        if (s[kk + 1]) s = movePiece(s, kk + 1, d.piece, { x: end[0], y: end[1], dir: endDir }, true);
+        if (s[kk + 1] && s[kk].ball.holder === d.piece) {
+          // the ball holder dribbles: he still has it next step unless he passes
           if (!s[kk].arrows.some(a => a.kind === "pass")) s[kk + 1] = { ...s[kk + 1], ball: { ...s[kk + 1].ball, holder: d.piece } };
         }
       }
@@ -465,7 +590,23 @@ export default function Editor({ initial, readOnly = false, shared = false, role
       for (const q of arrowCurve(a, step, next)) { const dd = dist(p, q); if (dd < bd) { bd = dd; best = a.id; } }
     }
     if (best) {
-      commitLine(s => s.map((x, i) => (i === kk ? { ...x, arrows: x.arrows.filter(a => a.id !== best) } : x)));
+      commitLine(s => {
+        const gone = s[kk].arrows.find(a => a.id === best)!;
+        let c = s.map((x, i) => (i === kk ? { ...x, arrows: x.arrows.filter(a => a.id !== best) } : x));
+        const nx = c[kk + 1];
+        if (nx && gone.kind !== "pass" && gone.piece && c[kk].pos[gone.piece]) {
+          // without his run he stands still: back where he was in this step, in the next step and
+          // the ones after that were made from it (where he stood still)
+          const { x, y, dir } = c[kk].pos[gone.piece];
+          c = movePiece(c, kk + 1, gone.piece, { x, y, dir }, true);
+        }
+        if (nx && gone.kind === "pass") {
+          // without the pass the ball stays with the one who had it
+          c[kk + 1] = { ...c[kk + 1], ball: { ...c[kk].ball } };
+          c[kk] = { ...c[kk], passAt: undefined };
+        }
+        return c;
+      });
       return;
     }
     const id = nearestPiece(visible.filter(x => x.side === "them"), step.pos, p, 2.5);
@@ -480,15 +621,15 @@ export default function Editor({ initial, readOnly = false, shared = false, role
 
   /* ---------- step, piece and variant commands ---------- */
   const addStep = () => {
-    commitLine(s => { const c = s.slice(); c.splice(kk + 1, 0, copyStep(c[kk])); return c; });
+    // drawing a run already made the next step with everyone at the end of their runs: go there
+    if (step.arrows.length && next && !next.arrows.length && !next.text) { setK(kk + 1); return; }
+    commitLine((s, doc) => { const c = s.slice(); c.splice(kk + 1, 0, stepAfter(c, kk, doc.pieces)); return c; });
     setK(kk + 1);
   };
   const removeStep = () => {
     if (steps.length < 2) return;
     commitLine(s => {
-      const c = s.filter((_, i) => i !== kk);
-      if (kk > 0 && kk === s.length - 1) c[kk - 1] = { ...c[kk - 1], arrows: [] };
-      return c;
+      return s.filter((_, i) => i !== kk);
     });
     setK(Math.max(0, kk - 1));
   };
@@ -498,19 +639,6 @@ export default function Editor({ initial, readOnly = false, shared = false, role
       s => ({ ...s, pos: { ...s.pos, [id]: { x: L / 2 + 8, y: MIDY, dir: 180 } } })));
     setShowThem(true);
   };
-  const addVariant = () => {
-    const v: Variant = { id: uid(), name: `Variant ${variants.length + 1}`, from: kk, steps: [copyStep(data.steps[kk])] };
-    commit(cur => ({ ...cur, variants: [...(cur.variants ?? []), v] }));
-    setLine(v.id);
-  };
-  const renameVariant = (text: string) =>
-    setData(d => ({ ...d, variants: d.variants?.map(v => (v.id === line ? { ...v, name: text.slice(0, 40) } : v)) }));
-  const removeVariant = () => {
-    const id = line;
-    commit(cur => ({ ...cur, variants: cur.variants?.filter(v => v.id !== id) }));
-    setLine(null);
-    setK(Math.min(kk, data.steps.length - 1));
-  };
   const runAuto = () => {
     commitLine((s, d) => autoPlace(s, d.pieces, autoOpts));
     setMore(false);
@@ -519,13 +647,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
   const setPassAt = (v: number) => setSteps(s => s.map((x, i) => (i === kk ? { ...x, passAt: v } : x)));
   const setNote = (id: string, text: string) =>
     setSteps(s => s.map((x, i) => (i === kk ? { ...x, notes: { ...x.notes, [id]: text.slice(0, 120) } } : x)));
-  const pickLine = (l: Line) => {
-    stop();
-    setLine(l);
-    setK(x => Math.min(x, lineSteps(data, l).length - 1));
-  };
 
-  const onLineChip = (e: React.MouseEvent<HTMLButtonElement>) => pickLine(e.currentTarget.dataset.line || null);
   const onSpeed = (e: React.MouseEvent<HTMLButtonElement>) => setSpeed(Number(e.currentTarget.dataset.speed));
 
   /* ---------- share link ---------- */
@@ -553,8 +675,10 @@ export default function Editor({ initial, readOnly = false, shared = false, role
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as Element | null)?.closest?.("input, textarea")) return;
-      if ((e.ctrlKey || e.metaKey) && e.key === "z") { e.preventDefault(); undo(); }
+      // text fields keep their own undo; everywhere else Cmd/Ctrl+Z undoes the last change on the board
+      const t = e.target as HTMLInputElement | null;
+      if (t?.closest?.("input:not([readonly]), textarea")) return;
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.code === "KeyZ" || e.key.toLowerCase() === "z")) { e.preventDefault(); undo(); }
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
@@ -640,7 +764,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
   /* ---------- render ---------- */
   const lbl = portrait ? "rotate(90)" : undefined;
   const holder = shownStep.ball.holder ? pieceById[shownStep.ball.holder] : null;
-  const saveText = { saved: "Sparat", saving: "Sparar…", dirty: "Ändrat", error: "Kunde inte spara" }[save];
+  const saveText = { saved: "Sparat", saving: "Sparar…", dirty: "Ändrat", error: "Kunde inte spara", conflict: "Inte sparat" }[save];
   const hideArrows = quizAsking; // the arrows would give the answer away
   let hint: React.ReactNode = present
     ? "Styr med → / mellanslag, ← tillbaka, A spelar allt, F helskärm. Eller med mobilen."
@@ -657,11 +781,18 @@ export default function Editor({ initial, readOnly = false, shared = false, role
 
   return (
     <main className={"wrap editor" + (present ? " present" : "")}>
+      {save === "conflict" && (
+        <div className="update conflict" role="alert">
+          <span>Spelet har sparats från en annan enhet. Dina senaste ändringar är inte sparade.</span>
+          <button type="button" className="update-go" onClick={() => { void saveNow(true); }}>Spara min version</button>
+          <button type="button" className="update-alt" onClick={() => { acked.current = shown.current; location.reload(); }}>Hämta den andra</button>
+        </div>
+      )}
       <header className="top">
         <div className="title">
-          {present ? <Link className="back" href={`/spel/${initial.id}`}>← Avsluta presentation</Link>
+          {present ? <Link className="back" href={`/spel/${initial.id}`} onClick={leave}>← Avsluta presentation</Link>
             : shared ? <span className="kicker">{roleId ? `Din roll: ${NAMES[role!] ?? role}` : "Delat spel"}</span>
-            : <Link className="back" href="/">← Mina spel</Link>}
+            : <Link className="back" href="/" onClick={leave}>← Mina spel</Link>}
           <input className="name" value={name} onChange={e => setName(e.target.value)} aria-label="Spelets namn" maxLength={80} readOnly={readOnly || mode === "play"} />
         </div>
         {present && (
@@ -674,10 +805,12 @@ export default function Editor({ initial, readOnly = false, shared = false, role
         )}
         {!readOnly && (
           <div className="bar">
-            <div className="modes" role="group" aria-label="Läge">
-              <button type="button" aria-pressed={mode === "play"} onClick={() => switchMode("play")}>Spela</button>
-              <button type="button" aria-pressed={mode === "edit"} onClick={() => switchMode("edit")}>Redigera</button>
-            </div>
+            {!phone && (
+              <div className="modes" role="group" aria-label="Läge">
+                <button type="button" aria-pressed={mode === "play"} onClick={() => switchMode("play")}>Spela</button>
+                <button type="button" aria-pressed={mode === "edit"} onClick={() => switchMode("edit")}>Redigera</button>
+              </div>
+            )}
             <button className="btn ghost" type="button" onClick={openShare} disabled={share.busy} aria-expanded={share.open}>Dela</button>
             {mode === "edit" && <>
               <span className={"save " + save} role="status">{saveText}</span>
@@ -709,32 +842,6 @@ export default function Editor({ initial, readOnly = false, shared = false, role
           </div>
         )}
       </header>
-
-      {mode === "edit" ? (
-        <nav className="tools" aria-label="Verktyg">
-          {TOOLS.map(t => (
-            <button key={t.id} type="button" aria-pressed={tool === t.id} className={"tool tool-" + t.id} onClick={() => setTool(t.id)} disabled={playing}>
-              {t.label}
-            </button>
-          ))}
-        </nav>
-      ) : quiz ? (
-        <div className={"quiz" + (quiz.feedback ? (quiz.feedback.ok ? " ok" : " wrong") : "")} role="status" aria-live="polite">
-          {quiz.done ? <>
-            <b>Klart! {quiz.score} av {quiz.asked} rätt.</b>
-            <button className="btn" type="button" onClick={startQuiz}>Gör om</button>
-            <button className="btn ghost" type="button" onClick={endQuiz}>Avsluta</button>
-          </> : quiz.feedback ? (
-            <b>{quiz.feedback.ok ? "Rätt!" : `Fel. Rätt svar: ${quiz.feedback.right.map(labelOf).join(" eller ")}`}</b>
-          ) : quiz.q ? (
-            <span><b>Fråga {quiz.asked + 1}:</b> {nameOf(quiz.q.passer)} har bollen. Vem ska bollen till? Tryck på spelaren.</span>
-          ) : <span>Spelar…</span>}
-          {!quiz.done && <><span className="quiz-score">{quiz.score}/{quiz.asked}</span>
-            <button className="btn ghost" type="button" onClick={endQuiz}>Avsluta</button></>}
-        </div>
-      ) : (
-        <p className="hint play-hint">{hint}</p>
-      )}
 
       <figure className="rink">
         <svg
@@ -792,9 +899,10 @@ export default function Editor({ initial, readOnly = false, shared = false, role
                 {shownStep.arrows.map(a => {
                   if (a.piece && !showThem && pieceById[a.piece]?.side === "them") return null;
                   const pts = arrowCurve(a, shownStep, shownNext);
-                  const d = pathD(a.kind === "drib" ? wavy(pts) : pts);
+                  const kind = arrowKind(a, shownStep);
+                  const d = pathD(pts);
                   const mine = !roleId || a.piece === roleId || (a.kind === "pass" && (shownStep.ball.holder === roleId || shownNext?.ball.holder === roleId));
-                  return <path key={a.id} d={d} className={"arrow arrow-" + a.kind + (mine ? "" : " other")} markerEnd={`url(#ah-${a.kind})`} />;
+                  return <path key={a.id} d={d} className={"arrow arrow-" + kind + (a.lob ? " lob" : "") + (mine ? "" : " other")} markerEnd={`url(#ah-${kind})`} />;
                 })}
                 {draft?.kind === "stroke" && draft.pts.length > 1 && (() => {
                   // show the raw finger trace faintly and what it snaps to
@@ -803,7 +911,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
                   return (
                     <>
                       <path d={pathD(draft.pts)} className="arrow trace" />
-                      <path d={pathD(draft.arrow === "drib" ? wavy(snapped) : snapped)} className={"arrow draft arrow-" + draft.arrow} markerEnd={`url(#ah-${draft.arrow})`} />
+                      <path d={pathD(snapped)} className={"arrow draft arrow-" + draft.arrow + (draft.lob ? " lob" : "")} markerEnd={`url(#ah-${draft.arrow})`} />
                     </>
                   );
                 })()}
@@ -826,142 +934,175 @@ export default function Editor({ initial, readOnly = false, shared = false, role
                 );
               })}
             </g>
-            <circle className="ball" cx={frame.ball[0]} cy={frame.ball[1]} r={0.6} />
+            {!!frame.lift && <circle className="ball-shadow" cx={frame.ball[0]} cy={frame.ball[1]} r={0.5} />}
+            <circle className="ball" cx={frame.ball[0]} cy={frame.ball[1] - (frame.lift ?? 0) * 1.5} r={0.6 * (1 + 0.8 * (frame.lift ?? 0))} />
+            {ghostBall && !hideArrows && <circle className="ball ghost" cx={ghostBall[0]} cy={ghostBall[1]} r={0.6} />}
+            {!hideArrows && handles.map((h, i) => <circle key={i} className="bend" cx={h[0]} cy={h[1]} r={0.7} />)}
           </g>
         </svg>
       </figure>
 
-      <div className="foot">
-        {mode === "edit" && <p className="hint">{playing ? "Spelar…" : hint}</p>}
-        {(variants.length > 0 || (mode === "edit" && !readOnly)) && (
-          <div className="lines" role="group" aria-label="Spår">
-            {variants.length > 0 && [null, ...variants.map(v => v.id)].map(l => (
-              <button key={l ?? "main"} type="button" className="line-chip" aria-pressed={line === l} data-line={l ?? ""} onClick={onLineChip} disabled={!!quiz}>
-                {l ? variants.find(v => v.id === l)!.name : MAIN_NAME}
-              </button>
-            ))}
-            {mode === "edit" && line === null && (
-              <button className="tg" type="button" onClick={addVariant} disabled={playing}>+ Variant från steg {kk + 1}</button>
-            )}
-            {mode === "edit" && line !== null && <>
-              <input className="variant-name" value={variants.find(v => v.id === line)?.name ?? ""} onFocus={snapshot} onChange={e => renameVariant(e.target.value)} aria-label="Variantens namn" />
-              <button className="tg" type="button" onClick={removeVariant} disabled={playing}>Ta bort variant</button>
-            </>}
+      <aside className="side" aria-label="Kontroller">
+        <section className="sec">
+          <h2 className="sec-h">Uppspelning</h2>
+          <div className="bar play-bar">
+            <button className="btn ghost" type="button" onClick={() => { stop(); setK(Math.max(0, kk - 1)); }} disabled={(kk === 0 && !playing) || !!quiz} aria-label="Föregående steg">←</button>
+            <button className="btn" type="button" id="playstep" onClick={() => (playing ? stop() : play(kk, false))} disabled={(!playing && !next && choicesAt(data, line, kk).length < 2) || !!quiz}>
+              {playing ? "Paus" : "Spela steg"}
+            </button>
+            <button className="btn ghost" type="button" onClick={() => { stop(); setK(Math.min(steps.length - 1, kk + 1)); }} disabled={(!next && !playing) || !!quiz} aria-label="Nästa steg">→</button>
+            <button className="btn ghost" type="button" onClick={() => { setLine(null); play(0, true, { line: null }); }} disabled={playing || !!quiz || data.steps.length < 2}>Spela allt</button>
           </div>
+          {quiz && (
+            <div className={"quiz" + (quiz.feedback ? (quiz.feedback.ok ? " ok" : " wrong") : "")} role="status" aria-live="polite">
+              {quiz.done ? <>
+                <b>Klart! {quiz.score} av {quiz.asked} rätt.</b>
+                <button className="btn" type="button" onClick={startQuiz}>Gör om</button>
+                <button className="btn ghost" type="button" onClick={endQuiz}>Avsluta</button>
+              </> : quiz.feedback ? (
+                <b>{quiz.feedback.ok ? "Rätt!" : `Fel. Rätt svar: ${quiz.feedback.right.map(labelOf).join(" eller ")}`}</b>
+              ) : quiz.q ? (
+                <span><b>Fråga {quiz.asked + 1}:</b> {nameOf(quiz.q.passer)} har bollen. Vem ska bollen till? Tryck på spelaren.</span>
+              ) : <span>Spelar…</span>}
+              {!quiz.done && <><span className="quiz-score">{quiz.score}/{quiz.asked}</span>
+                <button className="btn ghost" type="button" onClick={endQuiz}>Avsluta</button></>}
+            </div>
+          )}
+          {mode === "play" && !quiz && hint && <p className="hint">{hint}</p>}
+        </section>
+
+        {mode === "edit" && (
+          <section className="sec">
+            <h2 className="sec-h">Verktyg</h2>
+            <nav className="tools" aria-label="Verktyg">
+              {TOOLS.map(t => (
+                <button key={t.id} type="button" aria-pressed={tool === t.id} className={"tool tool-" + t.id} title={t.hint} onClick={() => { setTool(t.id); setNotice(null); }} disabled={playing}>
+                  {t.label}
+                </button>
+              ))}
+            </nav>
+            {notice && <p className="hint notice" role="status">{notice}</p>}
+          </section>
         )}
-        <div className="stepline">
-          <span className="count">{(anim ? anim.from : kk) + 1}/{steps.length}</span>
+
+        <section className="sec">
+          <h2 className="sec-h">Steg {(anim ? anim.from : kk) + 1} av {steps.length}</h2>
           {mode === "play" ? (
             <p className="step-text">{hideArrows ? "" : shownStep.text}</p>
           ) : <input
             className="step-text"
-            placeholder={next ? "Beskriv vad som händer i steget" : "Rita en pil för att skapa nästa steg"}
+            placeholder="Beskriv vad som händer i steget"
             value={shownStep.text}
             onFocus={snapshot}
             onChange={e => setSteps(s => s.map((x, i) => (i === kk ? { ...x, text: e.target.value.slice(0, 140) } : x)))}
             disabled={playing}
             aria-label="Beskrivning av steget"
           />}
-        </div>
-        {mode === "play" && !quiz && viewer && pieceById[viewer]?.side === "us" && (() => {
-          const t = taskFor(viewer, shownStep, shownNext, data.pieces);
-          return (
-            <p className={"task" + (roleId === viewer ? " mine" : "")}>
-              <b>{roleId === viewer ? "Din uppgift" : `Uppgift för ${labelOf(viewer)}`}:</b> {t.text}
-            </p>
-          );
-        })()}
-        {mode === "edit" && sel && pieceById[sel]?.side === "us" && (
-          <label className="task-edit">
-            <span>Uppgift för {labelOf(sel)}:</span>
-            <input
-              value={step.notes?.[sel] ?? ""}
-              placeholder={taskFor(sel, { ...step, notes: {} }, next, data.pieces).text}
-              onFocus={snapshot}
-              onChange={e => setNote(sel, e.target.value)}
-              disabled={playing}
-            />
-          </label>
-        )}
-        <div className="bar">
-          <button className="btn ghost" type="button" onClick={() => { stop(); setK(Math.max(0, kk - 1)); }} disabled={(kk === 0 && !playing) || !!quiz} aria-label="Föregående steg">←</button>
-          <button className="btn" type="button" id="playstep" onClick={() => (playing ? stop() : play(kk, false))} disabled={(!playing && !next && choicesAt(data, line, kk).length < 2) || !!quiz}>
-            {playing ? "Paus" : "Spela steg"}
-          </button>
-          <button className="btn ghost" type="button" onClick={() => { stop(); setK(Math.min(steps.length - 1, kk + 1)); }} disabled={(!next && !playing) || !!quiz} aria-label="Nästa steg">→</button>
-          <div className="dots" role="group" aria-label="Steg">
-            {steps.map((s, i) => (
-              <button key={s.id} type="button" className={i === (anim ? anim.from : kk) ? "cur" : i < kk ? "done" : ""} onClick={() => { stop(); setK(i); }} aria-label={`Steg ${i + 1}`} disabled={!!quiz}>
-                {i + 1}
-              </button>
-            ))}
-          </div>
-          <button className="btn ghost" type="button" onClick={() => { setLine(null); play(0, true, { line: null }); }} disabled={playing || !!quiz || data.steps.length < 2}>Spela allt</button>
-        </div>
-        <div className="bar small">
-          {mode === "edit" && <>
-            <button className="tg" type="button" onClick={addStep} disabled={playing || (line !== null && kk < own)}>+ Steg</button>
-            <button className="tg" type="button" onClick={removeStep} disabled={playing || steps.length < 2 || (line !== null && kk <= own)}>Ta bort steg</button>
-          </>}
-          {mode === "play" && <>
-            <button className="tg" type="button" aria-pressed={lanes} onClick={() => setLanes(v => !v)}>Passningsvägar</button>
-            <button className="tg" type="button" aria-pressed={space} onClick={() => setSpace(v => !v)}>Ytor</button>
-            {!quiz && <button className="tg" type="button" onClick={startQuiz} disabled={data.steps.length < 2}>Quiz</button>}
-            {!quiz && viewer && pieceById[viewer] && <button className="btn" type="button" onClick={open3d}>Se i 3D</button>}
-          </>}
-          <button className="tg more-btn" type="button" aria-expanded={more} onClick={() => setMore(v => !v)}>Mer {more ? "▴" : "▾"}</button>
+          {mode === "play" && !quiz && viewer && pieceById[viewer]?.side === "us" && (() => {
+            const t = taskFor(viewer, shownStep, shownNext, data.pieces);
+            return (
+              <p className={"task" + (roleId === viewer ? " mine" : "")}>
+                <b>{roleId === viewer ? "Din uppgift" : `Uppgift för ${labelOf(viewer)}`}:</b> {t.text}
+              </p>
+            );
+          })()}
+          {mode === "edit" && sel && pieceById[sel]?.side === "us" && (
+            <label className="task-edit">
+              <span>Uppgift för {labelOf(sel)}:</span>
+              <input
+                value={step.notes?.[sel] ?? ""}
+                placeholder={taskFor(sel, { ...step, notes: {} }, next, data.pieces).text}
+                onFocus={snapshot}
+                onChange={e => setNote(sel, e.target.value)}
+                disabled={playing}
+              />
+            </label>
+          )}
+          {mode === "edit" && (
+            <div className="bar small">
+              <button className="tg" type="button" onClick={addStep} disabled={playing || (line !== null && kk < own)}>+ Steg</button>
+              <button className="tg" type="button" onClick={removeStep} disabled={playing || steps.length < 2 || kk !== steps.length - 1 || (line !== null && kk <= own)} title="Bara det sista steget kan tas bort, eftersom varje steg bygger på det före.">Ta bort sista steget</button>
+            </div>
+          )}
           {holder && !hideArrows && <span className="holder">Bollen: {holder.label ? NAMES[holder.label] ?? holder.label : "motståndare"}</span>}
-        </div>
-        {more && (
-          <div className="more" role="dialog" aria-label="Fler inställningar">
-            <div className="more-head">
-              <span>Fler inställningar</span>
-              <button type="button" className="more-x" aria-label="Stäng" onClick={() => setMore(false)}>✕</button>
+        </section>
+
+        {mode === "play" && (
+          <section className="sec">
+            <h2 className="sec-h">Analys</h2>
+            <div className="bar small">
+              <button className="tg" type="button" aria-pressed={lanes} onClick={() => setLanes(v => !v)}>Passningsvägar</button>
+              <button className="tg" type="button" aria-pressed={space} onClick={() => setSpace(v => !v)}>Ytor</button>
+              {!quiz && <button className="tg" type="button" onClick={startQuiz} disabled={data.steps.length < 2}>Quiz</button>}
+              {!quiz && viewer && pieceById[viewer] && <button className="btn" type="button" onClick={open3d}>Se i 3D</button>}
             </div>
-            <div className="more-row">
-              <span className="more-lbl">Tempo</span>
-              <div className="seg-mini" role="group" aria-label="Uppspelningstempo">
-                {[0.5, 0.75, 1, 1.5, 2].map(v => (
-                  <button key={v} type="button" aria-pressed={speed === v} data-speed={v} onClick={onSpeed}>{String(v).replace(".", ",")}×</button>
-                ))}
+          </section>
+        )}
+
+        <section className="sec more-sec">
+          <button className="tg more-btn" type="button" aria-expanded={more} onClick={() => setMore(v => !v)}>Fler inställningar {more ? "▴" : "▾"}</button>
+          {more && (
+            <div className="more" role="dialog" aria-label="Fler inställningar">
+              <div className="more-head">
+                <span>Fler inställningar</span>
+                <button type="button" className="more-x" aria-label="Stäng" onClick={() => setMore(false)}>✕</button>
               </div>
-            </div>
-            {mode === "play" && !present && (
               <div className="more-row">
-                <button className="btn" type="button" onClick={() => { stop(); setVideo(true); setMore(false); }}>Exportera video</button>
-                <span className="more-note">Spelet som video att skicka till laget{variants.length ? ` (spåret ${lineName(data, line)})` : ""}.</span>
+                <span className="more-lbl">Tempo</span>
+                <div className="seg-mini" role="group" aria-label="Uppspelningstempo">
+                  {[0.5, 0.75, 1, 1.5, 2].map(v => (
+                    <button key={v} type="button" aria-pressed={speed === v} data-speed={v} onClick={onSpeed}>{String(v).replace(".", ",")}×</button>
+                  ))}
+                </div>
               </div>
-            )}
-            {!readOnly && mode === "play" && (
-              <div className="more-row">
-                <Link className="btn" href={`/presentera/${initial.id}`}>Presentera på tv</Link>
-                <span className="more-note">Helskärm för tv/projektor, styrs med tangentbord, klickare eller mobilen.</span>
-              </div>
-            )}
-            <div className="more-row">
-              <button className="tg" type="button" aria-pressed={showThem} onClick={() => setShowThem(v => !v)}>Visa motståndare</button>
-              {mode === "edit" && <button className="tg" type="button" onClick={addOpponent} disabled={playing}>+ Motståndare</button>}
-            </div>
-            {mode === "edit" && <>
-              <div className="more-row">
-                <span className="more-lbl">Övriga spelare</span>
-                <button className="tg" type="button" aria-pressed={autoOpts.us} onClick={() => setAutoOpts(o => ({ ...o, us: !o.us }))}>Egna</button>
-                <button className="tg" type="button" aria-pressed={autoOpts.them} onClick={() => setAutoOpts(o => ({ ...o, them: !o.them }))}>Motståndare</button>
-                <button className="btn" type="button" onClick={runAuto} disabled={playing || steps.length < 2 || (!autoOpts.us && !autoOpts.them)}>Placera övriga automatiskt</button>
-              </div>
-              <p className="more-note">Spelare utan egna pilar följer bollen i alla steg. Går att ångra och justera för hand.</p>
-              {passRuns && (
+              {mode === "play" && !present && (
                 <div className="more-row">
-                  <span className="more-lbl">Passet går</span>
-                  <span className="more-note">direkt</span>
-                  <input type="range" min={0} max={100} step={5} value={Math.round((step.passAt ?? 1) * 100)} onPointerDown={snapshot} onChange={e => setPassAt(Number(e.target.value) / 100)} aria-label="När passet går under passarens åkning" />
-                  <span className="more-note">när han åkt klart</span>
+                  <button className="btn" type="button" onClick={() => { stop(); setVideo(true); setMore(false); }}>Exportera video</button>
+                  <span className="more-note">Spelet som video att skicka till laget{variants.length ? ` (spåret ${lineName(data, line)})` : ""}.</span>
                 </div>
               )}
-            </>}
-          </div>
-        )}
-      </div>
+              {!readOnly && mode === "play" && (
+                <div className="more-row">
+                  <Link className="btn" href={`/presentera/${initial.id}`} onClick={leave}>Presentera på tv</Link>
+                  <span className="more-note">Helskärm för tv/projektor, styrs med tangentbord, klickare eller mobilen.</span>
+                </div>
+              )}
+              <div className="more-row">
+                <button className="tg" type="button" aria-pressed={showThem} onClick={() => setShowThem(v => !v)}>Visa motståndare</button>
+                {mode === "edit" && <button className="tg" type="button" onClick={addOpponent} disabled={playing}>+ Motståndare</button>}
+              </div>
+              {mode === "edit" && <>
+                <div className="more-row">
+                  <span className="more-lbl">Övriga spelare</span>
+                  <button className="tg" type="button" aria-pressed={autoOpts.us} onClick={() => setAutoOpts(o => ({ ...o, us: !o.us }))}>Egna</button>
+                  <button className="tg" type="button" aria-pressed={autoOpts.them} onClick={() => setAutoOpts(o => ({ ...o, them: !o.them }))}>Motståndare</button>
+                  <button className="btn" type="button" onClick={runAuto} disabled={playing || steps.length < 2 || (!autoOpts.us && !autoOpts.them)}>Placera övriga automatiskt</button>
+                </div>
+                <p className="more-note">Spelare utan egna pilar följer bollen i alla steg. Går att ångra och justera för hand.</p>
+                {passRuns && (
+                  <div className="more-row">
+                    <span className="more-lbl">Passet går</span>
+                    <span className="more-note">direkt</span>
+                    <input type="range" min={0} max={100} step={5} value={Math.round((step.passAt ?? 1) * 100)} onPointerDown={snapshot} onChange={e => setPassAt(Number(e.target.value) / 100)} aria-label="När passet går under passarens åkning" />
+                    <span className="more-note">när han åkt klart</span>
+                  </div>
+                )}
+              </>}
+            </div>
+          )}
+        </section>
+      </aside>
+
+      <nav className="steps-bar" aria-label="Steg">
+        <span className="steps-lbl">Steg</span>
+        <div className="dots">
+          {steps.map((s, i) => (
+            <button key={s.id} type="button" className={i === (anim ? anim.from : kk) ? "cur" : i < kk ? "done" : ""} onClick={() => { stop(); setK(i); }} aria-label={`Steg ${i + 1}`} aria-current={i === kk ? "step" : undefined} disabled={!!quiz}>
+              {i + 1}
+            </button>
+          ))}
+        </div>
+      </nav>
 
       {choice && (
         <div className="pop" role="dialog" aria-modal="true" aria-labelledby="pop-h">
