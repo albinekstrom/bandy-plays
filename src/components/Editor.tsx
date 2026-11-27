@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Arrow, ArrowKind, Play, PlayData, Pt, Step } from "@/lib/types";
 import { L, W, MIDY, NAMES } from "@/lib/rink";
-import { clamp, curvePts, dist, fitStroke, heading, pathD, wavy } from "@/lib/geom";
+import { clamp, dist, fitStroke, heading, pathD, spline, wavy } from "@/lib/geom";
 import {
   arrowCurve, ballPoint, copyStep, frameAt, movePiece, nearestPiece, plan, stillFrame, uid, type Frame,
 } from "@/lib/play";
@@ -233,14 +233,15 @@ export default function Editor({ initial }: { initial: Play }) {
   };
 
   function finishStroke(d: Extract<Drag, { kind: "stroke" }>) {
-    const fit = fitStroke(d.pts);
-    const ctrl = d.arrow === "pass" ? null : fit.ctrl; // passes fly straight
-    const end = fit.b;
-    const endDir = Math.round(heading(ctrl ?? fit.a, end));
+    // passes fly straight; runs follow the drawn curve, smoothed
+    const way = d.arrow === "pass" ? [d.pts[0], d.pts[d.pts.length - 1]] : fitStroke(d.pts);
+    const curve = spline(way);
+    const end = way[way.length - 1];
+    const endDir = Math.round(heading(curve[Math.max(0, curve.length - 3)], end));
     commit(cur => {
       let s = cur.steps.slice();
       if (!s[k + 1]) s.splice(k + 1, 0, copyStep(s[k]));
-      const arrow: Arrow = { id: uid(), kind: d.arrow, piece: d.piece, pts: [fit.a, end], ctrl };
+      const arrow: Arrow = { id: uid(), kind: d.arrow, piece: d.piece, pts: way };
       // one movement per player (and one pass) per step: a new stroke replaces the old
       const keep = s[k].arrows.filter(a => (d.arrow === "pass" ? a.kind !== "pass" : a.piece !== d.piece));
       s[k] = { ...s[k], arrows: [...keep, arrow] };
@@ -380,8 +381,8 @@ export default function Editor({ initial }: { initial: Play }) {
               })}
               {draft?.kind === "stroke" && draft.pts.length > 1 && (() => {
                 // show the raw finger trace faintly and what it snaps to
-                const f = fitStroke(draft.pts);
-                const snapped = curvePts(f.a, f.b, draft.arrow === "pass" ? null : f.ctrl);
+                const way = draft.arrow === "pass" ? [draft.pts[0], draft.pts[draft.pts.length - 1]] : fitStroke(draft.pts);
+                const snapped = spline(way);
                 return (
                   <>
                     <path d={pathD(draft.pts)} className="arrow trace" />

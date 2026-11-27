@@ -25,8 +25,8 @@ export interface Ball {
 
 /* An arrow in step k describes what happens between step k and k+1.
    run/drib arrows belong to a piece; pass arrows belong to the ball.
-   pts is [start, end]; ctrl, when set, bends it into one smooth turn
-   (a quadratic Bézier control point). Passes are always straight. */
+   pts are waypoints from start to end, drawn as a smooth curve through
+   them. Passes are always straight. ctrl is the older one-turn format. */
 export interface Arrow {
   id: string;
   kind: ArrowKind;

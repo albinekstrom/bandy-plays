@@ -54,30 +54,92 @@ function offLine(p: Pt, a: Pt, b: Pt) {
   return Math.abs((b[0] - a[0]) * (a[1] - p[1]) - (a[0] - p[0]) * (b[1] - a[1])) / len;
 }
 
-/** Snap a finger stroke to a straight line (ctrl = null) or a single smooth turn. */
-export function fitStroke(raw: Pt[]): { a: Pt; b: Pt; ctrl: Pt | null } {
+/** Points every `step` metres along a polyline. */
+export function resample(pts: Pt[], step = 0.5): Pt[] {
+  const out: Pt[] = [pts[0]];
+  let carry = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const [p, q] = [pts[i - 1], pts[i]];
+    const d = dist(p, q);
+    let at = step - carry;
+    while (at <= d) {
+      out.push([lerp(p[0], q[0], at / d), lerp(p[1], q[1], at / d)]);
+      at += step;
+    }
+    carry = d - (at - step);
+  }
+  const last = pts[pts.length - 1];
+  if (dist(out[out.length - 1], last) > 1e-6) out.push(last);
+  return out;
+}
+
+/** Ramer–Douglas–Peucker: few waypoints, same shape. */
+function simplify(pts: Pt[], eps: number): Pt[] {
+  if (pts.length < 3) return pts;
+  const [a, b] = [pts[0], pts[pts.length - 1]];
+  let max = 0, idx = 0;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const d = offLine(pts[i], a, b);
+    if (d > max) { max = d; idx = i; }
+  }
+  if (max <= eps) return [a, b];
+  return [...simplify(pts.slice(0, idx + 1), eps).slice(0, -1), ...simplify(pts.slice(idx), eps)];
+}
+
+/** Turn a finger stroke into waypoints: a straight line if it is nearly straight,
+    otherwise the drawn curve with the hand jitter smoothed out. */
+export function fitStroke(raw: Pt[]): Pt[] {
   const a = raw[0], b = raw[raw.length - 1];
-  const chord = dist(a, b);
   let dev = 0;
   for (const p of raw) dev = Math.max(dev, offLine(p, a, b));
   // wobble within ~12 % of the length (at least 1.5 m) counts as straight
-  if (raw.length < 3 || dev < Math.max(1.5, 0.12 * chord)) return { a, b, ctrl: null };
+  if (raw.length < 3 || dev < Math.max(1.5, 0.12 * dist(a, b))) return [a, b];
 
-  // least-squares control point for a quadratic Bézier, chord-length parameters
-  const cum = [0];
-  for (let i = 1; i < raw.length; i++) cum.push(cum[i - 1] + dist(raw[i - 1], raw[i]));
-  const total = cum[cum.length - 1] || 1;
-  let nx = 0, ny = 0, den = 0;
-  raw.forEach((p, i) => {
-    const t = cum[i] / total, w = 2 * t * (1 - t);
-    const rx = (1 - t) ** 2 * a[0] + t * t * b[0], ry = (1 - t) ** 2 * a[1] + t * t * b[1];
-    nx += w * (p[0] - rx); ny += w * (p[1] - ry); den += w * w;
-  });
-  if (den < 1e-9) return { a, b, ctrl: null };
-  return { a, b, ctrl: [nx / den, ny / den] };
+  // even spacing, then a moving average (~2 m) whose window shrinks towards the
+  // ends, so the start, the end and their directions stay where they were drawn
+  const pts = resample(raw, 0.5);
+  const R = 4;
+  let cur = pts;
+  for (let pass = 0; pass < 2; pass++) {
+    cur = cur.map((p, i) => {
+      const r = Math.min(R, i, cur.length - 1 - i);
+      if (r === 0) return p;
+      let x = 0, y = 0;
+      for (let j = i - r; j <= i + r; j++) { x += cur[j][0]; y += cur[j][1]; }
+      return [x / (2 * r + 1), y / (2 * r + 1)] as Pt;
+    });
+  }
+  return simplify(cur, 0.25);
 }
 
-/** Points along a straight line or quadratic turn, about every `step` metres. */
+/** Smooth curve through waypoints (centripetal Catmull-Rom: no loops or overshoot). */
+export function spline(pts: Pt[], step = 0.5): Pt[] {
+  if (pts.length < 3) return resample(pts, step);
+  const n = pts.length;
+  const ext: Pt[] = [
+    [2 * pts[0][0] - pts[1][0], 2 * pts[0][1] - pts[1][1]],
+    ...pts,
+    [2 * pts[n - 1][0] - pts[n - 2][0], 2 * pts[n - 1][1] - pts[n - 2][1]],
+  ];
+  const out: Pt[] = [pts[0]];
+  for (let k = 1; k < ext.length - 2; k++) {
+    const [p0, p1, p2, p3] = [ext[k - 1], ext[k], ext[k + 1], ext[k + 2]];
+    const tj = (a: Pt, b: Pt) => Math.max(Math.sqrt(dist(a, b)), 1e-4);
+    const t1 = tj(p0, p1), t2 = t1 + tj(p1, p2), t3 = t2 + tj(p2, p3);
+    const segs = Math.max(2, Math.ceil(dist(p1, p2) / step));
+    for (let s = 1; s <= segs; s++) {
+      const t = t1 + ((t2 - t1) * s) / segs;
+      const mix = (a: Pt, b: Pt, ta: number, tb: number): Pt =>
+        [((tb - t) * a[0] + (t - ta) * b[0]) / (tb - ta), ((tb - t) * a[1] + (t - ta) * b[1]) / (tb - ta)];
+      const A1 = mix(p0, p1, 0, t1), A2 = mix(p1, p2, t1, t2), A3 = mix(p2, p3, t2, t3);
+      const B1 = mix(A1, A2, 0, t2), B2 = mix(A2, A3, t1, t3);
+      out.push(mix(B1, B2, t1, t2));
+    }
+  }
+  return out;
+}
+
+/** Points along a straight line or quadratic turn (arrows saved before waypoints), about every `step` metres. */
 export function curvePts(a: Pt, b: Pt, ctrl: Pt | null | undefined, step = 0.5): Pt[] {
   const c = ctrl ?? [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
   const approx = dist(a, c) + dist(c, b);

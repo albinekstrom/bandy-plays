@@ -2,7 +2,7 @@
    Shared by the editor (client) and the server. */
 import type { Arrow, Ball, Piece, PlayData, Pos, Pt, Step } from "./types";
 import { US_START, THEM_START } from "./rink";
-import { along, clamp, curvePts, dist, ease, heading, lerp, lerpAngle, polyLength } from "./geom";
+import { along, clamp, curvePts, spline, dist, ease, heading, lerp, lerpAngle, polyLength } from "./geom";
 
 export const uid = () =>
   globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -61,7 +61,8 @@ export function arrowCurve(a: Arrow, step: Step, next: Step | undefined): Pt[] {
   const q = a.piece ? next?.pos[a.piece] : undefined;
   const from: Pt = p ? [p.x, p.y] : a.pts[0];
   const to: Pt = q ? [q.x, q.y] : a.pts[a.pts.length - 1];
-  return curvePts(from, to, a.ctrl);
+  if (a.ctrl) return curvePts(from, to, a.ctrl);
+  return spline([from, ...a.pts.slice(1, -1), to]);
 }
 
 interface Mover { path: Pt[]; len: number; dur: number; startDir: number; endDir: number }
