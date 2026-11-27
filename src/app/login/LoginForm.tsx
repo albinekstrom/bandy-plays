@@ -6,9 +6,12 @@ export default function LoginForm() {
   const [msg, action, pending] = useActionState(login, null);
   return (
     <form action={action} className="gate-form">
+      <label htmlFor="name">Namn</label>
+      <input id="name" name="name" className="field" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoFocus required
+        onInput={e => { const t = e.currentTarget; t.value = t.value.toLowerCase(); }} />
       <label htmlFor="pass">Lösenord</label>
       <div className="row">
-        <input id="pass" name="pass" type="password" autoComplete="current-password" autoCapitalize="none" spellCheck={false} autoFocus required />
+        <input id="pass" name="pass" type="password" autoComplete="current-password" required />
         <button className="btn" type="submit" disabled={pending} aria-label="Logga in">→</button>
       </div>
       <p className="msg" role="status" aria-live="polite">{msg}</p>

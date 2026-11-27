@@ -367,3 +367,19 @@ details.adv[open] summary{margin-bottom:6px}
 .vx-seg button[aria-pressed="true"]{background:var(--natt);color:#fff}
 .vx-seg button:focus-visible{outline:2px solid var(--rosa);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){.vx-bar span{transition:none}}
+
+/* ---------- accounts ---------- */
+.gate-form .field,.acc-form .field{min-height:48px;padding:0 12px;border:2px solid var(--natt);border-radius:0;background:#fff;font-size:16px}
+.gate-form .field:focus,.acc-form .field:focus{outline:2px solid var(--rosa);outline-offset:-2px}
+.gate-form .field{margin-bottom:6px}
+.gate-note{margin:0 0 6px;font-size:14px;color:var(--skiffer)}
+.acc{display:flex;flex-direction:column;gap:10px;max-width:420px}
+.acc h2{margin:0;font:800 24px var(--head);text-transform:uppercase;letter-spacing:.03em}
+.acc-note{margin:0;font-size:14px;color:var(--skiffer)}
+.acc-list{margin:0;padding:0;list-style:none;display:flex;flex-wrap:wrap;gap:6px}
+.acc-list li{padding:4px 10px;border:2px solid var(--natt);font:700 16px var(--head);letter-spacing:.04em}
+.acc-form{display:flex;flex-direction:column;gap:10px}
+.acc-form label{display:flex;flex-direction:column;gap:4px;font-weight:600;font-size:14px;color:var(--skiffer)}
+.acc-form .btn{align-self:flex-start}
+.msg.ok{color:#1a7f45}
+a.btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}

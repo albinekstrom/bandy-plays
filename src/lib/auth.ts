@@ -1,7 +1,8 @@
 import "server-only";
 import { cookies } from "next/headers";
-import { COOKIE, validToken } from "./session";
+import { COOKIE, tokenUser } from "./session";
 
+/** The logged-in name, or null. */
 export async function loggedIn() {
-  return validToken((await cookies()).get(COOKIE)?.value);
+  return tokenUser((await cookies()).get(COOKIE)?.value);
 }

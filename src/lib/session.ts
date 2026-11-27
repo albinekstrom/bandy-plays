@@ -1,7 +1,7 @@
-/* One shared password. A session is "<expiry>.<hmac>" signed with AUTH_SECRET.
+/* A session is "<name>.<expiry>.<hmac>" signed with AUTH_SECRET.
    Web Crypto only, so it runs in the proxy and in route handlers alike. */
 export const COOKIE = "bp_session";
-export const MAX_AGE = 60 * 60 * 24 * 90; // 90 days: he shouldn't have to log in often
+export const MAX_AGE = 60 * 60 * 24 * 90; // 90 days: nobody should have to log in often
 
 const enc = new TextEncoder();
 const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
@@ -13,28 +13,29 @@ async function hmac(msg: string) {
   return hex(await crypto.subtle.sign("HMAC", key, enc.encode(msg)));
 }
 
-function same(a: string, b: string) {
+export function same(a: string, b: string) {
   if (a.length !== b.length) return false;
   let d = 0;
   for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return d === 0;
 }
 
-export async function makeToken() {
+export async function makeToken(name: string) {
   const exp = String(Math.floor(Date.now() / 1000) + MAX_AGE);
-  return exp + "." + (await hmac(exp));
+  return `${name}.${exp}.${await hmac(`${name}.${exp}`)}`;
 }
 
-export async function validToken(token: string | undefined) {
-  if (!token) return false;
-  const [exp, sig] = token.split(".");
-  if (!exp || !sig || Number(exp) < Date.now() / 1000) return false;
-  return same(sig, await hmac(exp));
+/** The logged-in name, or null. */
+export async function tokenUser(token: string | undefined): Promise<string | null> {
+  if (!token) return null;
+  const [name, exp, sig] = token.split(".");
+  if (!name || !exp || !sig || Number(exp) < Date.now() / 1000) return null;
+  return same(sig, await hmac(`${name}.${exp}`)) ? name : null;
 }
 
-export async function passwordOk(given: string) {
+/** Only for creating the very first account: the old shared password as a one-time key. */
+export async function setupKeyOk(given: string) {
   const want = process.env.APP_PASSWORD;
-  if (!want) throw new Error("APP_PASSWORD must be set");
-  // compare digests so the length of the password doesn't leak
+  if (!want) return false;
   return same(await hmac("pw:" + given), await hmac("pw:" + want));
 }
