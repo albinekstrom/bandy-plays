@@ -1,17 +1,23 @@
 # Bandyspel
 
-Draw bandy plays step by step and play them back. Next.js on Vercel, one shared password.
+Draw bandy plays step by step, play them back, and see them in 3D. Live at https://bandy-plays.vercel.app.
 
-## Local
+## Run locally (macOS)
 
 ```
-cp .env.example .env.local   # set APP_PASSWORD and AUTH_SECRET (openssl rand -hex 32)
+xcode-select --install                  # git
+brew install node gh                    # Homebrew: https://brew.sh
+gh auth login
+gh repo clone albinekstrom/bandy-plays && cd bandy-plays
 npm install
-npm run dev
+cp .env.example .env.local              # fill in APP_PASSWORD and AUTH_SECRET (openssl rand -hex 32)
+npm run dev                             # http://localhost:3000, log in as "daniel" with APP_PASSWORD
 ```
 
-Without `DATABASE_URL`, plays are stored in `.data/plays.json`.
+Leave `DATABASE_URL` empty locally: plays and accounts then live in `.data/` and the real data is untouched.
 
-## Vercel
+## Deploy
 
-Env vars: `APP_PASSWORD`, `AUTH_SECRET`, and `DATABASE_URL` (from the Neon integration).
+Push to `main`; Vercel builds and deploys. Vercel env: `APP_PASSWORD`, `AUTH_SECRET`, `DATABASE_URL` (Neon integration).
+
+See `CLAUDE.md` for how the code is organised.

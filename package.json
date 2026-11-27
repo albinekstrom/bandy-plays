@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "check": "tsc --noEmit && eslint"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.1",
@@ -24,5 +25,8 @@
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
     "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=20.9"
   }
 }
