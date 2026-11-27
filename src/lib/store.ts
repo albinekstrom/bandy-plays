@@ -15,6 +15,8 @@ export interface PlayStore {
   /** Set (token) or revoke (null) the read-only share link. */
   share(id: string, token: string | null): Promise<void>;
   byShare(token: string): Promise<Play | null>;
+  /** Returns false when the play does not exist. */
+  setTags(id: string, tags: string[]): Promise<boolean>;
 }
 
 const FILE = join(process.cwd(), ".data", "plays.json");
@@ -30,7 +32,7 @@ async function writeAll(plays: Play[]) {
 const fileStore: PlayStore = {
   async list() {
     return (await readAll())
-      .map(({ id, name, updatedAt }) => ({ id, name, updatedAt }))
+      .map(({ id, name, updatedAt, tags }) => ({ id, name, updatedAt, tags: tags ?? [] }))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   },
   async get(id) {
@@ -63,6 +65,14 @@ const fileStore: PlayStore = {
     const p = (await readAll()).find(x => x.shareToken === token);
     return p ? { ...p, shareToken: undefined } : null;
   },
+  async setTags(id, tags) {
+    const plays = await readAll();
+    const p = plays.find(x => x.id === id);
+    if (!p) return false;
+    p.tags = tags;
+    await writeAll(plays);
+    return true;
+  },
 };
 
 /* One table; the play's pieces and steps live in a jsonb column. */
@@ -78,18 +88,19 @@ function neonStore(url: string): PlayStore {
         updated_at timestamptz NOT NULL DEFAULT now()
       )`;
     await sql`ALTER TABLE plays ADD COLUMN IF NOT EXISTS share_token text`;
+    await sql`ALTER TABLE plays ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{}'`;
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS plays_share_token ON plays (share_token)`;
   })().catch(e => { ready = null; throw e; }));
 
-  type Row = { id: string; name: string; data: PlayData; updated_at: string | Date; share_token?: string | null };
-  const toPlay = (r: Row): Play => ({ id: r.id, name: r.name, updatedAt: new Date(r.updated_at).toISOString(), shareToken: r.share_token ?? null, ...r.data });
+  type Row = { id: string; name: string; data: PlayData; updated_at: string | Date; share_token?: string | null; tags?: string[] | null };
+  const toPlay = (r: Row): Play => ({ id: r.id, name: r.name, updatedAt: new Date(r.updated_at).toISOString(), shareToken: r.share_token ?? null, tags: r.tags ?? [], ...r.data });
   const isUuid = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
   return {
     async list() {
       await init();
-      const rows = (await sql`SELECT id, name, updated_at FROM plays ORDER BY updated_at DESC`) as Omit<Row, "data">[];
-      return rows.map(r => ({ id: r.id, name: r.name, updatedAt: new Date(r.updated_at).toISOString() }));
+      const rows = (await sql`SELECT id, name, updated_at, tags FROM plays ORDER BY updated_at DESC`) as Omit<Row, "data">[];
+      return rows.map(r => ({ id: r.id, name: r.name, updatedAt: new Date(r.updated_at).toISOString(), tags: r.tags ?? [] }));
     },
     async get(id) {
       if (!isUuid(id)) return null;
@@ -126,6 +137,12 @@ function neonStore(url: string): PlayStore {
       await init();
       const rows = (await sql`SELECT * FROM plays WHERE share_token = ${token}`) as Row[];
       return rows[0] ? { ...toPlay(rows[0]), shareToken: undefined } : null;
+    },
+    async setTags(id, tags) {
+      if (!isUuid(id)) return false;
+      await init();
+      const rows = (await sql`UPDATE plays SET tags = ${tags}::text[] WHERE id = ${id} RETURNING id`) as { id: string }[];
+      return rows.length > 0;
     },
   };
 }

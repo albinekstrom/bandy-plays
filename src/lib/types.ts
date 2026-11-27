@@ -64,10 +64,12 @@ export interface Play extends PlayData {
   name: string;
   updatedAt: string;
   shareToken?: string | null; // only sent to the owner
+  tags?: string[]; // kept outside the editor's data so autosave can't wipe them
 }
 
 export interface PlaySummary {
   id: string;
   name: string;
   updatedAt: string;
+  tags?: string[];
 }
