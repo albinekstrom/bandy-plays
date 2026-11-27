@@ -13,6 +13,9 @@ import {
 } from "@/lib/play";
 import { choicesAt, everyStep, lineName, lineSteps, ownFrom, receiverAt, writeLine, MAIN_NAME, type Line } from "@/lib/lines";
 import { laneStatus, type Lane } from "@/lib/lanes";
+import { autoPlace } from "@/lib/auto";
+import { spaceControl, CELL } from "@/lib/space";
+import { taskFor } from "@/lib/tasks";
 import Rink from "./Rink";
 
 // three.js is only loaded when someone opens the 3D view
@@ -45,7 +48,11 @@ interface Quiz {
   feedback: { ok: boolean; tapped: string; right: string[] } | null;
 }
 
-export default function Editor({ initial, readOnly = false }: { initial: Play; readOnly?: boolean }) {
+export default function Editor({ initial, readOnly = false, role }: {
+  initial: Play;
+  readOnly?: boolean;
+  role?: string; // a shared "Min uppgift" link: the label of the player it is for
+}) {
   const [name, setName] = useState(initial.name);
   const [data, setData] = useState<PlayData>({ pieces: initial.pieces, steps: initial.steps, variants: initial.variants ?? [] });
   const [past, setPast] = useState<PlayData[]>([]);
@@ -57,15 +64,21 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
   const [anim, setAnim] = useState<{ from: number; u: number } | null>(null);
   const [save, setSave] = useState<Save>("saved");
   const [portrait, setPortrait] = useState(false);
-  const [viewer, setViewer] = useState<string | null>(null);
+  const [viewer, setViewer] = useState<string | null>(() =>
+    role ? initial.pieces.find(p => p.side === "us" && p.label === role)?.id ?? null : null);
   // finished plays open for watching; a fresh one opens for drawing
   const [mode, setMode] = useState<Mode>(readOnly || initial.steps.length > 1 ? "play" : "edit");
   const [show3d, setShow3d] = useState(false);
   const [lanes, setLanes] = useState(false);
   const [choice, setChoice] = useState<Choice | null>(null);
   const [quiz, setQuiz] = useState<Quiz | null>(null);
-  const [share, setShare] = useState<{ open: boolean; token: string | null; copied: boolean; busy: boolean }>(
+  const [share, setShare] = useState<{ open: boolean; token: string | null; copied: boolean; busy: boolean; copiedRole?: string }>(
     { open: false, token: initial.shareToken ?? null, copied: false, busy: false });
+  const [speed, setSpeed] = useState(1);
+  const [space, setSpace] = useState(false);
+  const [more, setMore] = useState(false);
+  const [autoOpts, setAutoOpts] = useState({ us: true, them: true });
+  const [sel, setSel] = useState<string | null>(null); // player picked in edit mode (for his task)
   const lastTap = useRef<{ id: string; at: number } | null>(null);
   const quizTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -74,7 +87,8 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
   const dragRef = useRef<Drag | null>(null);
   const dataRef = useRef(data);
   const lineRef = useRef(line);
-  useLayoutEffect(() => { dataRef.current = data; lineRef.current = line; }, [data, line]);
+  const speedRef = useRef(speed);
+  useLayoutEffect(() => { dataRef.current = data; lineRef.current = line; speedRef.current = speed; }, [data, line, speed]);
 
   const steps = useMemo(() => lineSteps(data, line), [data, line]);
   const kk = Math.min(k, steps.length - 1);
@@ -84,6 +98,7 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
   const visible = useMemo(() => data.pieces.filter(p => showThem || p.side === "us"), [data.pieces, showThem]);
   const variants = data.variants ?? [];
   const own = ownFrom(data, line);
+  const roleId = role ? data.pieces.find(p => p.side === "us" && p.label === role)?.id ?? null : null;
   const labelOf = (id: string | null | undefined) => {
     const p = id ? pieceById[id] : undefined;
     return p ? p.label || "M" : "";
@@ -178,7 +193,7 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
     const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
     let cur = from;
     let t0 = -1; // set on the first frame
-    let dur = still ? 1 : plan(st[cur], st[cur + 1]).T * 1000;
+    let dur = still ? 1 : (plan(st[cur], st[cur + 1]).T * 1000) / speedRef.current;
     const tick = (now: number) => {
       if (t0 < 0) t0 = now;
       const u = (now - t0) / dur;
@@ -198,7 +213,7 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
       }
       if (all && cur < st.length - 1) {
         t0 = now + 450; // short breath on each step
-        dur = still ? 1 : plan(st[cur], st[cur + 1]).T * 1000;
+        dur = still ? 1 : (plan(st[cur], st[cur + 1]).T * 1000) / speedRef.current;
         const wait = (n: number) => {
           if (n < t0) { playRef.current = { raf: requestAnimationFrame(wait) }; return; }
           tick(n);
@@ -285,6 +300,30 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
   }, [lanes, mode, anim, step, data.pieces, pieceById]);
   const laneCount = (s: Lane) => laneList.filter(l => l.status === s).length;
 
+  // who gets there first: a soft blue (ours) / grey (theirs) map, drawn once per still step
+  const spaceImg = useMemo(() => {
+    if (!space || mode !== "play" || anim || typeof document === "undefined") return null;
+    const { cols, rows, grid } = spaceControl(data.pieces, step.pos);
+    const c = document.createElement("canvas");
+    c.width = cols; c.height = rows;
+    const g = c.getContext("2d")!;
+    const img = g.createImageData(cols, rows);
+    for (let i = 0; i < grid.length; i++) {
+      const m = grid[i], a = Math.min(1, Math.abs(m) / 1.2);
+      const [r, gg, b] = m > 0 ? [0, 87, 168] : [107, 119, 133];
+      img.data.set([r, gg, b, Math.round(40 + 120 * a)], i * 4);
+    }
+    g.putImageData(img, 0, 0);
+    return { href: c.toDataURL(), w: cols * CELL, h: rows * CELL };
+  }, [space, mode, anim, data.pieces, step.pos]);
+  const ourShare = useMemo(() => {
+    if (!spaceImg) return 0;
+    const { grid } = spaceControl(data.pieces, step.pos);
+    let n = 0;
+    for (const v of grid) if (v > 0) n++;
+    return Math.round((100 * n) / grid.length);
+  }, [spaceImg, data.pieces, step.pos]);
+
   /* ---------- pointer → rink coordinates ---------- */
   const toWorld = (e: React.PointerEvent): Pt => {
     const g = worldRef.current!;
@@ -320,6 +359,7 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
       else {
         const id = nearestPiece(visible, pos, p, REACH);
         if (id) d = { kind: "piece", id };
+        setSel(id);
       }
     } else if (tool === "run" || tool === "drib") {
       const id = nearestPiece(visible, pos, p, REACH);
@@ -466,6 +506,14 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
     setLine(null);
     setK(Math.min(kk, data.steps.length - 1));
   };
+  const runAuto = () => {
+    commitLine((s, d) => autoPlace(s, d.pieces, autoOpts));
+    setMore(false);
+  };
+  const passRuns = !!step.ball.holder && step.arrows.some(a => a.kind === "pass") && step.arrows.some(a => a.kind !== "pass" && a.piece === step.ball.holder);
+  const setPassAt = (v: number) => setSteps(s => s.map((x, i) => (i === kk ? { ...x, passAt: v } : x)));
+  const setNote = (id: string, text: string) =>
+    setSteps(s => s.map((x, i) => (i === kk ? { ...x, notes: { ...x.notes, [id]: text.slice(0, 120) } } : x)));
   const pickLine = (l: Line) => {
     stop();
     setLine(l);
@@ -473,6 +521,7 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
   };
 
   const onLineChip = (e: React.MouseEvent<HTMLButtonElement>) => pickLine(e.currentTarget.dataset.line || null);
+  const onSpeed = (e: React.MouseEvent<HTMLButtonElement>) => setSpeed(Number(e.currentTarget.dataset.speed));
 
   /* ---------- share link ---------- */
   const shareUrl = share.token && typeof window !== "undefined" ? `${location.origin}/dela/${share.token}` : "";
@@ -488,6 +537,10 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
     setShare(s => ({ ...s, busy: true }));
     const res = await fetch(`/api/plays/${initial.id}/share`, { method: "DELETE" });
     setShare(s => (res.ok ? { open: false, token: null, copied: false, busy: false } : { ...s, busy: false }));
+  }
+  async function copyRoleLink(e: React.MouseEvent<HTMLButtonElement>) {
+    const r = e.currentTarget.dataset.role!;
+    try { await navigator.clipboard.writeText(`${shareUrl}?roll=${encodeURIComponent(r)}`); setShare(s => ({ ...s, copiedRole: r })); } catch { /* ignore */ }
   }
   async function copyShare() {
     try { await navigator.clipboard.writeText(shareUrl); setShare(s => ({ ...s, copied: true })); } catch { /* select it by hand */ }
@@ -524,6 +577,7 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
     ? "Tryck på en spelare för att se hans synfält. Dubbeltryck eller Se i 3D för att stå i hans skor."
     : TOOLS.find(t => t.id === tool)!.hint;
   if (mode === "edit" && line && kk < own) hint = "Steg före förgreningen är gemensamma: ändringar här gäller alla spår.";
+  if (mode === "play" && space && !anim) hint = <>Ytor: <b className="lg-us">blått hinner vi först till ({ourShare} %)</b>, grått hinner motståndarna först till.</>;
   if (mode === "play" && lanes && !anim) {
     hint = step.ball.holder
       ? <>Passningsvägar: <b className="lg-open">{laneCount("open")} öppna</b> · <b className="lg-risky">{laneCount("risky")} riskabla</b> · <b className="lg-closed">{laneCount("closed")} stängda</b></>
@@ -558,6 +612,17 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
                 <input readOnly value={shareUrl} onFocus={e => e.currentTarget.select()} aria-label="Delningslänk" />
                 <button className="btn" type="button" onClick={copyShare}>{share.copied ? "Kopierad" : "Kopiera"}</button>
               </div>
+              <details className="adv">
+                <summary>Länk för en spelare (Min uppgift)</summary>
+                <p>Spelaren ser sin egen roll markerad, sitt synfält och sin uppgift i varje steg.</p>
+                <div className="role-links">
+                  {data.pieces.filter(p => p.side === "us" && p.label).map(p => (
+                    <button key={p.id} type="button" className="tg" data-role={p.label} onClick={copyRoleLink}>
+                      {share.copiedRole === p.label ? "Kopierad" : p.label}
+                    </button>
+                  ))}
+                </div>
+              </details>
               <button className="tg" type="button" onClick={stopSharing} disabled={share.busy}>Sluta dela (länken slutar fungera)</button>
             </> : <p>Kunde inte skapa en länk. Försök igen.</p>}
           </div>
@@ -628,6 +693,10 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
               );
             })()}
 
+            {spaceImg && (
+              <image href={spaceImg.href} x={0} y={0} width={spaceImg.w} height={spaceImg.h} preserveAspectRatio="none" className="space-map" clipPath="url(#rink-clip)" />
+            )}
+
             {laneList.length > 0 && (
               <g className="lanes">
                 {laneList.map(l => {
@@ -643,7 +712,8 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
                   if (a.piece && !showThem && pieceById[a.piece]?.side === "them") return null;
                   const pts = arrowCurve(a, shownStep, shownNext);
                   const d = pathD(a.kind === "drib" ? wavy(pts) : pts);
-                  return <path key={a.id} d={d} className={"arrow arrow-" + a.kind} markerEnd={`url(#ah-${a.kind})`} />;
+                  const mine = !roleId || a.piece === roleId || (a.kind === "pass" && (shownStep.ball.holder === roleId || shownNext?.ball.holder === roleId));
+                  return <path key={a.id} d={d} className={"arrow arrow-" + a.kind + (mine ? "" : " other")} markerEnd={`url(#ah-${a.kind})`} />;
                 })}
                 {draft?.kind === "stroke" && draft.pts.length > 1 && (() => {
                   // show the raw finger trace faintly and what it snaps to
@@ -669,7 +739,7 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
                 return (
                   <g key={pc.id} transform={`translate(${p.x.toFixed(2)} ${p.y.toFixed(2)})`}>
                     <path className={"nose nose-" + pc.side} d="M1.15 -0.75 L2.05 0 L1.15 0.75 Z" transform={`rotate(${p.dir.toFixed(1)})`} />
-                    <circle className={(pc.side === "us" ? "p-us" : "p-them") + (key ? " key" : "") + (mode === "play" && !quiz && viewer === pc.id ? " viewer" : "") + mark} r={pc.side === "us" ? 1.4 : 1.2} />
+                    <circle className={(pc.side === "us" ? "p-us" : "p-them") + (key ? " key" : "") + (mode === "play" && !quiz && viewer === pc.id ? " viewer" : "") + (roleId === pc.id ? " role" : "") + (mode === "edit" && sel === pc.id ? " selected" : "") + mark} r={pc.side === "us" ? 1.4 : 1.2} />
                     {pc.label && <text className="p-lbl" y={0.05} transform={lbl} style={pc.label.length > 1 ? { fontSize: "1px" } : undefined}>{pc.label}</text>}
                   </g>
                 );
@@ -712,6 +782,26 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
             aria-label="Beskrivning av steget"
           />}
         </div>
+        {mode === "play" && !quiz && viewer && pieceById[viewer]?.side === "us" && (() => {
+          const t = taskFor(viewer, shownStep, shownNext, data.pieces);
+          return (
+            <p className={"task" + (roleId === viewer ? " mine" : "")}>
+              <b>{roleId === viewer ? "Din uppgift" : `Uppgift för ${labelOf(viewer)}`}:</b> {t.text}
+            </p>
+          );
+        })()}
+        {mode === "edit" && sel && pieceById[sel]?.side === "us" && (
+          <label className="task-edit">
+            <span>Uppgift för {labelOf(sel)}:</span>
+            <input
+              value={step.notes?.[sel] ?? ""}
+              placeholder={taskFor(sel, { ...step, notes: {} }, next, data.pieces).text}
+              onFocus={snapshot}
+              onChange={e => setNote(sel, e.target.value)}
+              disabled={playing}
+            />
+          </label>
+        )}
         <div className="bar">
           <button className="btn ghost" type="button" onClick={() => { stop(); setK(Math.max(0, kk - 1)); }} disabled={(kk === 0 && !playing) || !!quiz} aria-label="Föregående steg">←</button>
           <button className="btn" type="button" id="playstep" onClick={() => (playing ? stop() : play(kk, false))} disabled={(!playing && !next && choicesAt(data, line, kk).length < 2) || !!quiz}>
@@ -731,16 +821,49 @@ export default function Editor({ initial, readOnly = false }: { initial: Play; r
           {mode === "edit" && <>
             <button className="tg" type="button" onClick={addStep} disabled={playing || (line !== null && kk < own)}>+ Steg</button>
             <button className="tg" type="button" onClick={removeStep} disabled={playing || steps.length < 2 || (line !== null && kk <= own)}>Ta bort steg</button>
-            <button className="tg" type="button" onClick={addOpponent} disabled={playing}>+ Motståndare</button>
           </>}
-          <button className="tg" type="button" aria-pressed={showThem} onClick={() => setShowThem(v => !v)}>Visa motståndare</button>
           {mode === "play" && <>
             <button className="tg" type="button" aria-pressed={lanes} onClick={() => setLanes(v => !v)}>Passningsvägar</button>
+            <button className="tg" type="button" aria-pressed={space} onClick={() => setSpace(v => !v)}>Ytor</button>
             {!quiz && <button className="tg" type="button" onClick={startQuiz} disabled={data.steps.length < 2}>Quiz</button>}
             {!quiz && viewer && pieceById[viewer] && <button className="btn" type="button" onClick={open3d}>Se i 3D</button>}
           </>}
+          <button className="tg more-btn" type="button" aria-expanded={more} onClick={() => setMore(v => !v)}>Mer {more ? "▴" : "▾"}</button>
           {holder && !hideArrows && <span className="holder">Bollen: {holder.label ? NAMES[holder.label] ?? holder.label : "motståndare"}</span>}
         </div>
+        {more && (
+          <div className="more">
+            <div className="more-row">
+              <span className="more-lbl">Tempo</span>
+              <div className="seg-mini" role="group" aria-label="Uppspelningstempo">
+                {[0.5, 0.75, 1, 1.5, 2].map(v => (
+                  <button key={v} type="button" aria-pressed={speed === v} data-speed={v} onClick={onSpeed}>{String(v).replace(".", ",")}×</button>
+                ))}
+              </div>
+            </div>
+            <div className="more-row">
+              <button className="tg" type="button" aria-pressed={showThem} onClick={() => setShowThem(v => !v)}>Visa motståndare</button>
+              {mode === "edit" && <button className="tg" type="button" onClick={addOpponent} disabled={playing}>+ Motståndare</button>}
+            </div>
+            {mode === "edit" && <>
+              <div className="more-row">
+                <span className="more-lbl">Övriga spelare</span>
+                <button className="tg" type="button" aria-pressed={autoOpts.us} onClick={() => setAutoOpts(o => ({ ...o, us: !o.us }))}>Egna</button>
+                <button className="tg" type="button" aria-pressed={autoOpts.them} onClick={() => setAutoOpts(o => ({ ...o, them: !o.them }))}>Motståndare</button>
+                <button className="btn" type="button" onClick={runAuto} disabled={playing || steps.length < 2 || (!autoOpts.us && !autoOpts.them)}>Placera övriga automatiskt</button>
+              </div>
+              <p className="more-note">Spelare utan egna pilar följer bollen i alla steg. Går att ångra och justera för hand.</p>
+              {passRuns && (
+                <div className="more-row">
+                  <span className="more-lbl">Passet går</span>
+                  <span className="more-note">direkt</span>
+                  <input type="range" min={0} max={100} step={5} value={Math.round((step.passAt ?? 1) * 100)} onPointerDown={snapshot} onChange={e => setPassAt(Number(e.target.value) / 100)} aria-label="När passet går under passarens åkning" />
+                  <span className="more-note">när han åkt klart</span>
+                </div>
+              )}
+            </>}
+          </div>
+        )}
       </div>
 
       {choice && (

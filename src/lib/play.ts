@@ -51,11 +51,8 @@ const moveArrow = (s: Step, id: string) => s.arrows.find(r => r.kind !== "pass" 
 /** Sampled path of an arrow, with ends pinned to where things are in step k and k+1. */
 export function arrowCurve(a: Arrow, step: Step, next: Step | undefined): Pt[] {
   if (a.kind === "pass") {
-    const passer = step.ball.holder;
-    const runs = passer && next?.pos[passer] && moveArrow(step, passer);
-    const from = runs ? carried(next!.pos[passer!]) : ballPoint(step.ball, step.pos);
     const to = next ? ballPoint(next.ball, next.pos) : a.pts[a.pts.length - 1];
-    return curvePts(from, to, null);
+    return curvePts(passOrigin(step, next), to, null);
   }
   const p = a.piece ? step.pos[a.piece] : undefined;
   const q = a.piece ? next?.pos[a.piece] : undefined;
@@ -63,6 +60,17 @@ export function arrowCurve(a: Arrow, step: Step, next: Step | undefined): Pt[] {
   const to: Pt = q ? [q.x, q.y] : a.pts[a.pts.length - 1];
   if (a.ctrl) return curvePts(from, to, a.ctrl);
   return spline([from, ...a.pts.slice(1, -1), to]);
+}
+
+/** Where the ball leaves from: the passer's spot `passAt` of the way through his own run. */
+function passOrigin(step: Step, next: Step | undefined): Pt {
+  const passer = step.ball.holder;
+  const run = passer && next?.pos[passer] ? moveArrow(step, passer) : undefined;
+  if (!passer || !run) return ballPoint(step.ball, step.pos);
+  const path = arrowCurve(run, step, next);
+  const u = ease(clamp(step.passAt ?? 1, 0, 1));
+  const p = along(path, u), q = along(path, Math.min(1, u + 0.02)), o = along(path, Math.max(0, u - 0.02));
+  return carried({ x: p[0], y: p[1], dir: heading(o, q) });
 }
 
 interface Mover { path: Pt[]; len: number; dur: number; startDir: number; endDir: number }
@@ -93,8 +101,9 @@ export function plan(a: Step, b: Step): Plan {
     const path = arrowCurve(arrow, a, b);
     const flight = Math.max(0.25, polyLength(path) / BALL_SPEED);
     const passer = a.ball.holder, rec = b.ball.holder;
-    let start = passer && moveArrow(a, passer) ? movers[passer].dur : 0;
-    if (rec && movers[rec]) start = Math.max(start, movers[rec].dur - flight);
+    let start = passer && moveArrow(a, passer) ? movers[passer].dur * clamp(a.passAt ?? 1, 0, 1) : 0;
+    // with no timing set, wait so the ball meets the receiver; a set timing is kept as drawn
+    if (rec && movers[rec] && (a.passAt === undefined || !passer || !moveArrow(a, passer))) start = Math.max(start, movers[rec].dur - flight);
     pass = { path, start, flight };
     T = Math.max(T, start + flight + 0.2);
   }

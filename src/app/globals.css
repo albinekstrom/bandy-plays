@@ -266,3 +266,32 @@ p.step-text{margin:0;min-height:1.1em}
 .lg-open{color:#1a9e55}
 .lg-risky{color:#b07d00}
 .lg-closed{color:var(--rod)}
+
+/* ---------- more (advanced) panel ---------- */
+.more{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-left:4px solid var(--isgra);background:#fff}
+.more-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.more-lbl{font:800 15px var(--head);letter-spacing:.06em;text-transform:uppercase;color:var(--natt);min-width:110px}
+.more-note{margin:0;font-size:12px;color:var(--skiffer)}
+.more input[type=range]{flex:1;min-width:120px;accent-color:var(--rosa)}
+.more .btn{min-height:36px;padding:0 14px;font-size:15px}
+.more-btn{margin-left:auto}
+.seg-mini{display:flex;border:2px solid var(--natt)}
+.seg-mini button{min-height:34px;padding:0 10px;border:0;border-radius:0;background:var(--is);cursor:pointer;font:700 15px var(--head);color:var(--natt)}
+.seg-mini button + button{border-left:2px solid var(--natt)}
+.seg-mini button[aria-pressed="true"]{background:var(--natt);color:#fff}
+details.adv summary{cursor:pointer;font:700 14px var(--head);letter-spacing:.05em;text-transform:uppercase;color:var(--skiffer)}
+details.adv[open] summary{margin-bottom:6px}
+.role-links{display:flex;flex-wrap:wrap;gap:6px}
+
+/* ---------- tasks and roles ---------- */
+.task{margin:0;padding:6px 10px;border-left:4px solid var(--bla);background:var(--frost);font-size:15px}
+.task.mine{border-left-color:var(--rosa);font-size:17px}
+.task b{font:800 16px var(--head);letter-spacing:.05em;text-transform:uppercase}
+.task-edit{display:flex;align-items:center;gap:8px;font:700 15px var(--head);letter-spacing:.04em;text-transform:uppercase;color:var(--skiffer)}
+.task-edit input{flex:1;min-width:0;min-height:36px;padding:0 8px;border:2px solid var(--isgra);border-radius:0;background:#fff;font:400 15px var(--body);text-transform:none;letter-spacing:0;color:var(--natt)}
+.task-edit input:focus{outline:none;border-color:var(--rosa)}
+.p-us.role{stroke:var(--rosa);stroke-width:.7}
+.p-us.selected,.p-them.selected{stroke:var(--rosa);stroke-width:.55;stroke-dasharray:.6 .4}
+.arrow.other{opacity:.28}
+.space-map{image-rendering:auto;opacity:.75}
+.lg-us{color:var(--bla)}

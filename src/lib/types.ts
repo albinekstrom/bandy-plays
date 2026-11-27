@@ -41,6 +41,10 @@ export interface Step {
   pos: Record<string, Pos>;
   ball: Ball;
   arrows: Arrow[];
+  /** When the pass leaves, as a share of the passer's own run (0 = at once, 1 = when he's done; default 1). */
+  passAt?: number;
+  /** Per-player task for this step ("Din uppgift"), by piece id. */
+  notes?: Record<string, string>;
 }
 
 /* An alternative ending: branches off the main line at step `from`.
