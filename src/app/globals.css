@@ -266,3 +266,18 @@ p.step-text{margin:0;min-height:1.1em}
 .lg-open{color:#1a9e55}
 .lg-risky{color:#b07d00}
 .lg-closed{color:var(--rod)}
+
+/* ---------- 3D view: camera modes and playback in the footer ---------- */
+.v3d-foot{flex-wrap:wrap;justify-content:center;gap:8px 12px}
+.v3d-play{display:flex;align-items:center;gap:8px}
+.v3d-play .btn{min-height:40px;padding:0 14px;font-size:16px}
+.v3d-play .btn.v3d-arr{padding:0 12px}
+.v3d-foot .v3d-info{flex:1 1 100%;order:3}
+@media (max-width:700px){
+  .v3d-foot{gap:6px}
+  .v3d-cam,.v3d-play{width:100%}
+  .v3d-cam button{flex:1 1 auto;padding:0 4px;letter-spacing:.03em}
+  .v3d-play .btn{flex:1 1 auto;padding:0 8px;font-size:15px;letter-spacing:.04em}
+  .v3d-play .btn.v3d-arr{flex:0 0 44px;padding:0}
+  .v3d-foot .v3d-info{font-size:12px}
+}

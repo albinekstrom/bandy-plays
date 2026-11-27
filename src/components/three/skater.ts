@@ -16,26 +16,31 @@ const mat = (c: number) => {
   return mats.get(c)!;
 };
 
-/** Knee/elbow for a two-bone limb from a to b, bending towards `bend`. */
-function joint(a: THREE.Vector3, b: THREE.Vector3, l1: number, l2: number, bend: THREE.Vector3) {
-  const ab = b.clone().sub(a);
-  const d = Math.min(ab.length(), l1 + l2 - 1e-3);
-  const u = ab.normalize();
+/* scratch vectors: update() runs for every player every frame, so it allocates nothing */
+const _u = new THREE.Vector3(), _p = new THREE.Vector3(), _d = new THREE.Vector3();
+const UP = new THREE.Vector3(0, 1, 0);
+
+/** Knee/elbow for a two-bone limb from a to b, bending towards `bend`; written to `out`. */
+function joint(a: THREE.Vector3, b: THREE.Vector3, l1: number, l2: number, bend: THREE.Vector3, out: THREE.Vector3) {
+  _u.subVectors(b, a);
+  const d = Math.min(_u.length(), l1 + l2 - 1e-3);
+  _u.normalize();
   const along = (l1 * l1 - l2 * l2 + d * d) / (2 * d);
   const h = Math.sqrt(Math.max(0, l1 * l1 - along * along));
-  const perp = bend.clone().sub(u.clone().multiplyScalar(bend.dot(u))).normalize();
-  return a.clone().add(u.multiplyScalar(along)).add(perp.multiplyScalar(h));
+  _p.copy(_u).multiplyScalar(bend.dot(_u));
+  _p.subVectors(bend, _p).normalize();
+  return out.copy(a).addScaledVector(_u, along).addScaledVector(_p, h);
 }
 
 /** A capsule that is re-aimed between two points every frame. */
 function limb(radius: number, color: number, parent: THREE.Object3D) {
   const m = new THREE.Mesh(new THREE.CapsuleGeometry(radius, 1, 4, 10), mat(color));
   parent.add(m);
-  const up = new THREE.Vector3(0, 1, 0);
   return (a: THREE.Vector3, b: THREE.Vector3) => {
-    const d = b.clone().sub(a), len = d.length();
-    m.position.copy(a).add(b).multiplyScalar(0.5);
-    m.quaternion.setFromUnitVectors(up, d.normalize());
+    _d.subVectors(b, a);
+    const len = _d.length();
+    m.position.addVectors(a, b).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(UP, _d.normalize());
     m.scale.y = Math.max(0.01, len) / (1 + 2 * radius); // capsule is 1 + 2r tall unscaled
   };
 }
@@ -114,6 +119,14 @@ export function buildSkater(kit: Kit, opts: { phase: number; holder: boolean }) 
 
   const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
   const PERIOD = 1.6;
+  let holder = opts.holder;
+  // per-player scratch, reused every frame
+  const hip = v(0, 0, 0), foot = v(0, 0, 0), knee = v(0, 0, 0), ankle = v(0, 0, 0);
+  const heel = v(0, 0, 0), top = v(0, 0, 0), low = v(0, 0, 0), grip = v(0, 0, 0);
+  const shoulderC = v(0, 0, 0), sh = v(0, 0, 0), elbow = v(0, 0, 0);
+  const legBend = [v(1, 0.2, -0.15), v(1, 0.2, 0.15)], armBend = [v(-0.3, -1, -0.8), v(-0.3, -1, 0.8)];
+  const lean = v(Math.sin(LEAN), Math.cos(LEAN), 0);
+  const hands = [top, low];
 
   function update(t: number) {
     const ph = (t / PERIOD) * Math.PI * 2 + opts.phase;
@@ -123,40 +136,44 @@ export function buildSkater(kit: Kit, opts: { phase: number; holder: boolean }) 
     torso.rotation.x = roll;
 
     // legs: each pushes out to the side and back, then returns lifted
-    for (const [i, s] of [[0, -1], [1, 1]] as const) {
+    for (let i = 0; i < 2; i++) {
+      const s = i ? 1 : -1;
       const lp = ph + (i ? Math.PI : 0);
       const push = Math.max(0, Math.sin(lp)), back = Math.max(0, -Math.sin(lp));
-      const hip = v(-0.02, hipY - 0.05, s * 0.11).add(v(0, 0, roll * s * 0.3));
-      const foot = v(0.1 - 0.32 * push + 0.05 * back, 0.07 + 0.09 * back, s * (0.16 + 0.28 * push));
-      const knee = joint(hip, foot, THIGH, SHIN, v(1, 0.2, s * 0.15));
+      hip.set(-0.02, hipY - 0.05, s * 0.11 + roll * s * 0.3);
+      foot.set(0.1 - 0.32 * push + 0.05 * back, 0.07 + 0.09 * back, s * (0.16 + 0.28 * push));
+      joint(hip, foot, THIGH, SHIN, legBend[i], knee);
       thighs[i](hip, knee);
-      shins[i](knee, foot.clone().add(v(0, 0.08, 0)));
+      shins[i](knee, ankle.set(foot.x, foot.y + 0.08, foot.z));
       skates[i].position.set(foot.x, foot.y - 0.07, foot.z);
       skates[i].rotation.y = -s * 0.35 * push;
     }
 
     // club: blade on the ice ahead (at the ball for the ball carrier), swaying a little
-    const sweep = opts.holder ? 0.18 * Math.sin(ph * 2) : 0.05 * Math.sin(ph);
-    const heel = v(opts.holder ? 0.95 : 0.75, 0.025, 0.12 + sweep);
-    const top = v(0.28, hipY + 0.28, -0.12);
-    const low = top.clone().lerp(heel, 0.42);
-    shaft(top.clone().add(top.clone().sub(heel).normalize().multiplyScalar(0.08)), heel);
+    const sweep = holder ? 0.18 * Math.sin(ph * 2) : 0.05 * Math.sin(ph);
+    heel.set(holder ? 0.95 : 0.75, 0.025, 0.12 + sweep);
+    top.set(0.28, hipY + 0.28, -0.12);
+    low.copy(top).lerp(heel, 0.42);
+    grip.copy(top).sub(heel).normalize().multiplyScalar(0.08).add(top);
+    shaft(grip, heel);
     stickBlade.position.copy(heel);
     stickBlade.rotation.y = -0.2;
 
     // arms reach from the shoulders to the hands on the club
-    const lean = v(Math.sin(LEAN), Math.cos(LEAN), 0);
-    const shoulderC = v(0, hipY, 0).add(lean.multiplyScalar(0.55)).add(v(0, 0, roll * 0.3));
-    const hands = [top, low];
-    for (const [i, s] of [[0, -1], [1, 1]] as const) {
-      const sh = shoulderC.clone().add(v(0, 0, s * 0.22));
+    shoulderC.set(0, hipY, 0).addScaledVector(lean, 0.55);
+    shoulderC.z += roll * 0.3;
+    for (let i = 0; i < 2; i++) {
+      sh.copy(shoulderC);
+      sh.z += (i ? 1 : -1) * 0.22;
       const hand = hands[i];
-      const elbow = joint(sh, hand, UPPER, FORE, v(-0.3, -1, s * 0.8));
+      joint(sh, hand, UPPER, FORE, armBend[i], elbow);
       uppers[i](sh, elbow);
       fores[i](elbow, hand);
       gloves[i].position.copy(hand);
     }
   }
   update(0);
-  return { root, update };
+  /** The ball carrier holds the club further out, at the ball. */
+  const setHolder = (h: boolean) => { holder = h; };
+  return { root, update, setHolder };
 }
