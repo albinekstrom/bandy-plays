@@ -7,7 +7,7 @@ import * as THREE from "three";
 import type { Piece, Pos, Step } from "@/lib/types";
 import { L, W, MIDY, NAMES } from "@/lib/rink";
 import { ballPoint } from "@/lib/play";
-import { buildHall } from "./three/hall";
+import { ENVIRONMENTS, loadEnv, saveEnv, type EnvId } from "./three/environments";
 import { buildSkater, KIT_THEM, KIT_US } from "./three/skater";
 
 const EYE = 1.55; // eye height in a skating stance
@@ -115,6 +115,8 @@ export default function View3D({ pieces, step, viewer, k, count, onStep, onClose
   onClose: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const [envId, setEnvId] = useState<EnvId>(loadEnv);
+  const pickEnv = (id: EnvId) => { setEnvId(id); saveEnv(id); };
   const [edges, setEdges] = useState<Edge[]>([]);
   const sight = useMemo(() => sightlines(pieces, step.pos, viewer), [pieces, step.pos, viewer]);
   const hiddenN = Object.values(sight).filter(v => v === "hidden").length;
@@ -130,7 +132,8 @@ export default function View3D({ pieces, step, viewer, k, count, onStep, onClose
     renderer.setSize(host.clientWidth, host.clientHeight, false);
     host.appendChild(renderer.domElement);
     const scene = new THREE.Scene();
-    const { mirror } = buildHall(scene, renderer);
+    const env = (ENVIRONMENTS.find(e => e.id === envId) ?? ENVIRONMENTS[0]).build(scene, renderer);
+    const { mirror } = env;
     buildRink(scene);
 
     const pos = step.pos;
@@ -268,10 +271,11 @@ export default function View3D({ pieces, step, viewer, k, count, onStep, onClose
         (Array.isArray(mat) ? mat : mat ? [mat] : []).forEach(x => { (x as THREE.SpriteMaterial).map?.dispose(); x.dispose(); });
       });
       mirror.dispose();
+      env.dispose?.();
       renderer.dispose();
       el.remove();
     };
-  }, [pieces, step, viewer, me?.side, sight]);
+  }, [pieces, step, viewer, me?.side, sight, envId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -293,7 +297,14 @@ export default function View3D({ pieces, step, viewer, k, count, onStep, onClose
           <span className="kicker">Steg {k + 1}/{count}{step.text ? " · " + step.text : ""}</span>
           <h1>Ser som {myName}</h1>
         </div>
-        <button className="btn" type="button" onClick={onClose}>Stäng</button>
+        <div className="v3d-side">
+          <button className="btn" type="button" onClick={onClose}>Stäng</button>
+          <div className="v3d-env" role="group" aria-label="Miljö">
+            {ENVIRONMENTS.map(e => (
+              <button key={e.id} type="button" aria-pressed={envId === e.id} title={e.name} onClick={() => pickEnv(e.id)}>{e.label}</button>
+            ))}
+          </div>
+        </div>
       </header>
       <footer className="v3d-foot">
         <button className="btn ghost" type="button" onClick={() => onStep(k - 1)} disabled={k === 0} aria-label="Föregående steg">←</button>
