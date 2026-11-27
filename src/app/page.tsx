@@ -1,9 +1,8 @@
-import Link from "next/link";
 import { connection } from "next/server";
 import { store } from "@/lib/store";
 import { logout } from "./login/actions";
 import NewPlayButton from "@/components/NewPlayButton";
-import DeleteButton from "@/components/DeleteButton";
+import PlayList from "@/components/PlayList";
 
 const fmt = new Intl.DateTimeFormat("sv-SE", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/Stockholm" });
 
@@ -25,17 +24,7 @@ export default async function Home() {
       {plays.length === 0 ? (
         <p className="empty">Inga spel än. Tryck <b>Nytt spel</b> för att rita det första.</p>
       ) : (
-        <ul className="plays">
-          {plays.map(p => (
-            <li key={p.id}>
-              <Link href={`/spel/${p.id}`} className="play-link">
-                <span className="play-name">{p.name}</span>
-                <span className="play-date">{fmt.format(new Date(p.updatedAt))}</span>
-              </Link>
-              <DeleteButton id={p.id} />
-            </li>
-          ))}
-        </ul>
+        <PlayList plays={plays.map(p => ({ ...p, date: fmt.format(new Date(p.updatedAt)) }))} />
       )}
     </main>
   );

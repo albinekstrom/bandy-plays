@@ -295,3 +295,24 @@ details.adv[open] summary{margin-bottom:6px}
 .arrow.other{opacity:.28}
 .space-map{image-rendering:auto;opacity:.75}
 .lg-us{color:var(--bla)}
+
+/* ---------- playbook: tags + search ---------- */
+.find{display:flex;flex-direction:column;gap:12px}
+.search{width:100%;min-height:44px;padding:0 12px;border:2px solid var(--natt);border-radius:0;background:#fff;font-size:16px;color:var(--natt)}
+.search:focus{outline:2px solid var(--rosa);outline-offset:-2px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.chips .tg{min-height:44px}
+.chips .tg.sm{min-height:36px}
+.tagrow{display:flex;flex-wrap:wrap;gap:4px}
+.tagpill{padding:1px 8px;border:1px solid var(--isgra);background:var(--is);font:700 13px var(--head);letter-spacing:.06em;text-transform:uppercase;color:var(--skiffer)}
+.plays li{flex-wrap:wrap}
+.play-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;padding:12px 16px;background:#fff;border:2px solid var(--natt);color:var(--natt);text-decoration:none;transition:background .15s}
+.play-main:hover{background:var(--frost)}
+.play-top{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.btn.ghost.sm{font-size:16px;padding:0 12px}
+.btn.ghost.on{background:var(--frost)}
+.tagedit{flex:1 1 100%;display:flex;flex-direction:column;gap:12px;padding:12px 16px;border:2px solid var(--isgra);background:var(--is)}
+.tagadd{display:flex;gap:8px}
+.tagadd input{flex:1;min-width:0;min-height:44px;padding:0 12px;border:2px solid var(--natt);border-radius:0;background:#fff;font-size:16px}
+.tagadd input:focus{outline:2px solid var(--rosa);outline-offset:-2px}
+.nomatch{color:var(--skiffer);margin:0}
