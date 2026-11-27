@@ -43,15 +43,27 @@ export interface Step {
   arrows: Arrow[];
 }
 
+/* An alternative ending: branches off the main line at step `from`.
+   steps[0] is its own copy of that step (with the arrows that differ),
+   so the line reads main[0..from-1] + steps. */
+export interface Variant {
+  id: string;
+  name: string;
+  from: number;
+  steps: Step[];
+}
+
 export interface PlayData {
   pieces: Piece[];
   steps: Step[];
+  variants?: Variant[];
 }
 
 export interface Play extends PlayData {
   id: string;
   name: string;
   updatedAt: string;
+  shareToken?: string | null; // only sent to the owner
 }
 
 export interface PlaySummary {

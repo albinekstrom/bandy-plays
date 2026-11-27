@@ -12,6 +12,9 @@ export interface PlayStore {
   create(name: string, data: PlayData): Promise<Play>;
   update(id: string, name: string, data: PlayData): Promise<Play | null>;
   remove(id: string): Promise<void>;
+  /** Set (token) or revoke (null) the read-only share link. */
+  share(id: string, token: string | null): Promise<void>;
+  byShare(token: string): Promise<Play | null>;
 }
 
 const FILE = join(process.cwd(), ".data", "plays.json");
@@ -44,12 +47,21 @@ const fileStore: PlayStore = {
     const plays = await readAll();
     const i = plays.findIndex(p => p.id === id);
     if (i < 0) return null;
-    plays[i] = { id, name, updatedAt: new Date().toISOString(), ...data };
+    plays[i] = { ...plays[i], id, name, updatedAt: new Date().toISOString(), ...data };
     await writeAll(plays);
     return plays[i];
   },
   async remove(id) {
     await writeAll((await readAll()).filter(p => p.id !== id));
+  },
+  async share(id, token) {
+    const plays = await readAll();
+    const p = plays.find(x => x.id === id);
+    if (p) { p.shareToken = token; await writeAll(plays); }
+  },
+  async byShare(token) {
+    const p = (await readAll()).find(x => x.shareToken === token);
+    return p ? { ...p, shareToken: undefined } : null;
   },
 };
 
@@ -57,16 +69,20 @@ const fileStore: PlayStore = {
 function neonStore(url: string): PlayStore {
   const sql = neon(url);
   let ready: Promise<unknown> | null = null;
-  const init = () => (ready ??= sql`
-    CREATE TABLE IF NOT EXISTS plays (
-      id uuid PRIMARY KEY,
-      name text NOT NULL,
-      data jsonb NOT NULL,
-      updated_at timestamptz NOT NULL DEFAULT now()
-    )`.catch(e => { ready = null; throw e; }));
+  const init = () => (ready ??= (async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS plays (
+        id uuid PRIMARY KEY,
+        name text NOT NULL,
+        data jsonb NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`;
+    await sql`ALTER TABLE plays ADD COLUMN IF NOT EXISTS share_token text`;
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS plays_share_token ON plays (share_token)`;
+  })().catch(e => { ready = null; throw e; }));
 
-  type Row = { id: string; name: string; data: PlayData; updated_at: string | Date };
-  const toPlay = (r: Row): Play => ({ id: r.id, name: r.name, updatedAt: new Date(r.updated_at).toISOString(), ...r.data });
+  type Row = { id: string; name: string; data: PlayData; updated_at: string | Date; share_token?: string | null };
+  const toPlay = (r: Row): Play => ({ id: r.id, name: r.name, updatedAt: new Date(r.updated_at).toISOString(), shareToken: r.share_token ?? null, ...r.data });
   const isUuid = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
   return {
@@ -100,6 +116,16 @@ function neonStore(url: string): PlayStore {
       if (!isUuid(id)) return;
       await init();
       await sql`DELETE FROM plays WHERE id = ${id}`;
+    },
+    async share(id, token) {
+      if (!isUuid(id)) return;
+      await init();
+      await sql`UPDATE plays SET share_token = ${token} WHERE id = ${id}`;
+    },
+    async byShare(token) {
+      await init();
+      const rows = (await sql`SELECT * FROM plays WHERE share_token = ${token}`) as Row[];
+      return rows[0] ? { ...toPlay(rows[0]), shareToken: undefined } : null;
     },
   };
 }

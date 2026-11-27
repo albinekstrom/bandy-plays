@@ -16,7 +16,7 @@ export async function PUT(req: Request, ctx: RouteContext<"/api/plays/[id]">) {
   const body = await req.json().catch(() => null);
   const name = typeof body?.name === "string" ? body.name.trim().slice(0, 80) || "Namnlöst" : null;
   if (!name || !isPlayData(body)) return NextResponse.json({ error: "bad request" }, { status: 400 });
-  const play = await store().update((await ctx.params).id, name, { pieces: body.pieces, steps: body.steps });
+  const play = await store().update((await ctx.params).id, name, { pieces: body.pieces, steps: body.steps, variants: body.variants ?? [] });
   return play ? NextResponse.json({ updatedAt: play.updatedAt }) : NextResponse.json({ error: "not found" }, { status: 404 });
 }
 

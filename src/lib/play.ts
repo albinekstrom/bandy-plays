@@ -186,5 +186,8 @@ export function movePiece(steps: Step[], k: number, id: string, to: Partial<Pos>
 export function isPlayData(d: unknown): d is PlayData {
   if (!d || typeof d !== "object") return false;
   const o = d as PlayData;
-  return Array.isArray(o.pieces) && Array.isArray(o.steps) && o.steps.length > 0 && o.steps.length <= 200 && o.pieces.length <= 60;
+  const variantsOk = o.variants === undefined || (Array.isArray(o.variants) && o.variants.length <= 20 &&
+    o.variants.every(v => v && typeof v.id === "string" && typeof v.name === "string" && Number.isInteger(v.from) &&
+      v.from >= 0 && v.from < o.steps.length && Array.isArray(v.steps) && v.steps.length > 0 && v.steps.length <= 200));
+  return Array.isArray(o.pieces) && Array.isArray(o.steps) && o.steps.length > 0 && o.steps.length <= 200 && o.pieces.length <= 60 && variantsOk;
 }
