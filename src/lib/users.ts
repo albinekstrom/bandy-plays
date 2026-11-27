@@ -3,8 +3,8 @@
 import "server-only";
 import { neon } from "@neondatabase/serverless";
 import { randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { readJson, writeJson, locked } from "./jsonfile";
 import { promisify } from "node:util";
 
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number) => Promise<Buffer>;
@@ -47,9 +47,9 @@ interface UserStore {
 const FILE = join(process.cwd(), ".data", "users.json");
 const SETTINGS = join(process.cwd(), ".data", "settings.json");
 type Rec = { name: string; hash: string; role?: Role };
-async function readAll(): Promise<Rec[]> { try { return JSON.parse(await readFile(FILE, "utf8")); } catch { return []; } }
-async function writeAll(u: Rec[]) { await mkdir(join(process.cwd(), ".data"), { recursive: true }); await writeFile(FILE, JSON.stringify(u, null, 1)); }
-async function readSettings(): Promise<Record<string, string>> { try { return JSON.parse(await readFile(SETTINGS, "utf8")); } catch { return {}; } }
+const readAll = () => readJson<Rec[]>(FILE, []);
+const writeAll = (u: Rec[]) => writeJson(FILE, u);
+const readSettings = () => readJson<Record<string, string>>(SETTINGS, {});
 
 const fileStore: UserStore = {
   async count() { return (await readAll()).length; },
@@ -57,28 +57,35 @@ const fileStore: UserStore = {
   async hash(name) { return (await readAll()).find(u => u.name === name)?.hash ?? null; },
   async role(name) { const u = (await readAll()).find(x => x.name === name); return u ? u.role ?? "player" : null; },
   async setRole(name, role) {
-    const all = await readAll();
-    const u = all.find(x => x.name === name);
-    if (u) { u.role = role; await writeAll(all); }
+    return locked(FILE, async () => {
+      const all = await readAll();
+      const u = all.find(x => x.name === name);
+      if (u) { u.role = role; await writeAll(all); }
+    });
   },
   async add(name, hash, role) {
-    const all = await readAll();
-    if (all.some(u => u.name === name)) return false;
-    all.push({ name, hash, role });
-    await writeAll(all);
-    return true;
+    return locked(FILE, async () => {
+      const all = await readAll();
+      if (all.some(u => u.name === name)) return false;
+      all.push({ name, hash, role });
+      await writeAll(all);
+      return true;
+    });
   },
   async setHash(name, hash) {
-    const all = await readAll();
-    const u = all.find(x => x.name === name);
-    if (u) { u.hash = hash; await writeAll(all); }
+    return locked(FILE, async () => {
+      const all = await readAll();
+      const u = all.find(x => x.name === name);
+      if (u) { u.hash = hash; await writeAll(all); }
+    });
   },
   async teamCode() { return (await readSettings()).teamCode ?? null; },
   async setTeamCode(hash) {
-    const s = await readSettings();
-    s.teamCode = hash;
-    await mkdir(join(process.cwd(), ".data"), { recursive: true });
-    await writeFile(SETTINGS, JSON.stringify(s, null, 1));
+    return locked(SETTINGS, async () => {
+      const s = await readSettings();
+      s.teamCode = hash;
+      await writeJson(SETTINGS, s);
+    });
   },
 };
 

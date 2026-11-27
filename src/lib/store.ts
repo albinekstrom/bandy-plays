@@ -2,8 +2,8 @@
    otherwise a local JSON file (dev only; Vercel's disk is read-only). */
 import "server-only";
 import { neon } from "@neondatabase/serverless";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { readJson, writeJson, locked } from "./jsonfile";
 import type { Play, PlayData, PlaySummary } from "./types";
 
 export interface PlayStore {
@@ -21,13 +21,8 @@ export interface PlayStore {
 
 const FILE = join(process.cwd(), ".data", "plays.json");
 
-async function readAll(): Promise<Play[]> {
-  try { return JSON.parse(await readFile(FILE, "utf8")); } catch { return []; }
-}
-async function writeAll(plays: Play[]) {
-  await mkdir(join(process.cwd(), ".data"), { recursive: true });
-  await writeFile(FILE, JSON.stringify(plays, null, 1));
-}
+const readAll = () => readJson<Play[]>(FILE, []);
+const writeAll = (plays: Play[]) => writeJson(FILE, plays);
 
 const fileStore: PlayStore = {
   async list() {
@@ -39,39 +34,49 @@ const fileStore: PlayStore = {
     return (await readAll()).find(p => p.id === id) ?? null;
   },
   async create(name, data) {
-    const plays = await readAll();
-    const play: Play = { id: crypto.randomUUID(), name, updatedAt: new Date().toISOString(), ...data };
-    plays.push(play);
-    await writeAll(plays);
-    return play;
+    return locked(FILE, async () => {
+      const plays = await readAll();
+      const play: Play = { id: crypto.randomUUID(), name, updatedAt: new Date().toISOString(), ...data };
+      plays.push(play);
+      await writeAll(plays);
+      return play;
+    });
   },
   async update(id, name, data) {
-    const plays = await readAll();
-    const i = plays.findIndex(p => p.id === id);
-    if (i < 0) return null;
-    plays[i] = { ...plays[i], id, name, updatedAt: new Date().toISOString(), ...data };
-    await writeAll(plays);
-    return plays[i];
+    return locked(FILE, async () => {
+      const plays = await readAll();
+      const i = plays.findIndex(p => p.id === id);
+      if (i < 0) return null;
+      plays[i] = { ...plays[i], id, name, updatedAt: new Date().toISOString(), ...data };
+      await writeAll(plays);
+      return plays[i];
+    });
   },
   async remove(id) {
-    await writeAll((await readAll()).filter(p => p.id !== id));
+    return locked(FILE, async () => {
+      await writeAll((await readAll()).filter(p => p.id !== id));
+    });
   },
   async share(id, token) {
-    const plays = await readAll();
-    const p = plays.find(x => x.id === id);
-    if (p) { p.shareToken = token; await writeAll(plays); }
+    return locked(FILE, async () => {
+      const plays = await readAll();
+      const p = plays.find(x => x.id === id);
+      if (p) { p.shareToken = token; await writeAll(plays); }
+    });
   },
   async byShare(token) {
     const p = (await readAll()).find(x => x.shareToken === token);
     return p ? { ...p, shareToken: undefined } : null;
   },
   async setTags(id, tags) {
-    const plays = await readAll();
-    const p = plays.find(x => x.id === id);
-    if (!p) return false;
-    p.tags = tags;
-    await writeAll(plays);
-    return true;
+    return locked(FILE, async () => {
+      const plays = await readAll();
+      const p = plays.find(x => x.id === id);
+      if (!p) return false;
+      p.tags = tags;
+      await writeAll(plays);
+      return true;
+    });
   },
 };
 
