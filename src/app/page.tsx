@@ -16,7 +16,7 @@ export default async function Home() {
     <main className="page">
       <header className="top">
         <div className="title">
-          <span className="kicker">Surte{me ? ` · ${me.name}${admin ? " (admin)" : ""}` : ""}</span>
+          <span className="kicker">Surte{me ? ` · ${me.name.toUpperCase()}${admin ? " (admin)" : ""}` : ""}</span>
           <h1>Bandyspel</h1>
         </div>
         <div className="bar">

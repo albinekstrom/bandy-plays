@@ -7,8 +7,7 @@ export default function LoginForm() {
   return (
     <form action={action} className="gate-form">
       <label htmlFor="name">Namn</label>
-      <input id="name" name="name" className="field" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoFocus required
-        onInput={e => { const t = e.currentTarget; t.value = t.value.toLowerCase(); }} />
+      <input id="name" name="name" className="field field-name" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoFocus required />
       <label htmlFor="pass">Lösenord</label>
       <div className="row">
         <input id="pass" name="pass" type="password" autoComplete="current-password" required />

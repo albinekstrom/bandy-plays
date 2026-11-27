@@ -29,7 +29,7 @@ export async function register(_prev: string | null, form: FormData): Promise<st
   if (!code || !(await checkPassword(String(form.get("code") ?? ""), code))) { await slow(); return "Fel lagkod"; }
   const name = String(form.get("name") ?? "").trim().toLowerCase();
   const pass = String(form.get("pass") ?? ""), pass2 = String(form.get("pass2") ?? "");
-  if (!NAME_RE.test(name)) return "Namnet ska vara 2–20 små bokstäver (a–ö), inga mellanslag";
+  if (!NAME_RE.test(name)) return "Namnet ska vara 2–20 bokstäver (A–Ö), inga mellanslag eller siffror";
   if (pass.length < MIN_PASSWORD) return `Lösenordet ska vara minst ${MIN_PASSWORD} tecken`;
   if (pass !== pass2) return "Lösenorden är inte lika";
   if (!(await u.add(name, await hashPassword(pass), "player"))) return "Namnet är upptaget";

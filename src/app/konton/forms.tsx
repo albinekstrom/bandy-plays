@@ -2,13 +2,11 @@
 import { useActionState } from "react";
 import { addUser, changePassword, changeTeamCode } from "./actions";
 
-const lower = (e: React.FormEvent<HTMLInputElement>) => { const t = e.currentTarget; t.value = t.value.toLowerCase(); };
-
 export function AddUserForm() {
   const [res, action, pending] = useActionState(addUser, null);
   return (
     <form action={action} className="acc-form" key={res?.ok ? res.msg : "add"}>
-      <label>Namn (små bokstäver)<input name="name" className="field" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="off" pattern="[a-zåäö]{2,20}" required onInput={lower} /></label>
+      <label>Namn<input name="name" className="field field-name" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="off" pattern="[A-Za-zÅÄÖåäö]{2,20}" required /></label>
       <label>Lösenord (minst 8 tecken)<input name="pass" type="password" className="field" autoComplete="new-password" minLength={8} required /></label>
       <label>Lösenord igen<input name="pass2" type="password" className="field" autoComplete="new-password" minLength={8} required /></label>
       <label>Nivå

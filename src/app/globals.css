@@ -406,3 +406,4 @@ select.field{appearance:auto}
   .v3d-play .btn.v3d-arr{flex:0 0 44px;padding:0}
   .v3d-foot .v3d-info{font-size:12px}
 }
+.field-name{text-transform:uppercase}

@@ -2,8 +2,6 @@
 import { useActionState } from "react";
 import { register } from "../login/actions";
 
-const lower = (e: React.FormEvent<HTMLInputElement>) => { const t = e.currentTarget; t.value = t.value.toLowerCase(); };
-
 export default function RegisterForm() {
   const [msg, action, pending] = useActionState(register, null);
   return (
@@ -11,8 +9,8 @@ export default function RegisterForm() {
       <p className="gate-note">Lagkoden får du av tränaren.</p>
       <label htmlFor="code">Lagkod</label>
       <input id="code" name="code" type="password" className="field" autoComplete="off" required autoFocus />
-      <label htmlFor="name">Namn (små bokstäver)</label>
-      <input id="name" name="name" className="field" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} pattern="[a-zåäö]{2,20}" required onInput={lower} />
+      <label htmlFor="name">Namn</label>
+      <input id="name" name="name" className="field field-name" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} pattern="[A-Za-zÅÄÖåäö]{2,20}" required />
       <label htmlFor="pass">Lösenord (minst 8 tecken)</label>
       <input id="pass" name="pass" type="password" className="field" autoComplete="new-password" minLength={8} required />
       <label htmlFor="pass2">Lösenord igen</label>

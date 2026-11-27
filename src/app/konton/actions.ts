@@ -11,12 +11,12 @@ export async function addUser(_prev: Result, form: FormData): Promise<Result> {
   const u = await usersReady();
   const name = String(form.get("name") ?? "").trim().toLowerCase();
   const pass = String(form.get("pass") ?? ""), pass2 = String(form.get("pass2") ?? "");
-  if (!NAME_RE.test(name)) return { ok: false, msg: "Namnet ska vara 2–20 små bokstäver (a–ö), inga mellanslag" };
+  if (!NAME_RE.test(name)) return { ok: false, msg: "Namnet ska vara 2–20 bokstäver (A–Ö), inga mellanslag eller siffror" };
   if (pass.length < MIN_PASSWORD) return { ok: false, msg: `Lösenordet ska vara minst ${MIN_PASSWORD} tecken` };
   if (pass !== pass2) return { ok: false, msg: "Lösenorden är inte lika" };
   if (!(await u.add(name, await hashPassword(pass), role))) return { ok: false, msg: "Namnet är upptaget" };
   revalidatePath("/konton");
-  return { ok: true, msg: `Kontot "${name}" är skapat` };
+  return { ok: true, msg: `Kontot ${name.toUpperCase()} är skapat` };
 }
 
 export async function changePassword(_prev: Result, form: FormData): Promise<Result> {

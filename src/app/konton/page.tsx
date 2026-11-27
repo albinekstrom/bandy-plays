@@ -22,7 +22,7 @@ export default async function Accounts() {
           <h1>Konton</h1>
         </div>
       </header>
-      <p className="acc-note">Inloggad som <b>{me.name}</b> · {ROLE_NAMES[me.role]}</p>
+      <p className="acc-note">Inloggad som <b>{me.name.toUpperCase()}</b> · {ROLE_NAMES[me.role]}</p>
       {admin && <>
         <section className="acc">
           <h2>Alla konton</h2>
@@ -30,7 +30,7 @@ export default async function Accounts() {
           <ul className="acc-rows">
             {all.map(u => (
               <li key={u.name}>
-                <span className="acc-name">{u.name}{u.name === me.name ? " (du)" : ""}</span>
+                <span className="acc-name">{u.name.toUpperCase()}{u.name === me.name ? " (du)" : ""}</span>
                 <form action={setUserRole} className="seg-mini" aria-label={`Nivå för ${u.name}`}>
                   <input type="hidden" name="name" value={u.name} />
                   {(["player", "admin"] as const).map(r => (
