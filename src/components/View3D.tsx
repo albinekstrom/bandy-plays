@@ -7,9 +7,11 @@ import * as THREE from "three";
 import type { Piece, Pos, Step } from "@/lib/types";
 import { L, W, MIDY, NAMES } from "@/lib/rink";
 import { ballPoint } from "@/lib/play";
+import { buildHall } from "./three/hall";
+import { buildSkater, KIT_THEM, KIT_US } from "./three/skater";
 
-const EYE = 1.6;
-const C = { ice: 0xfbfdfe, ground: 0xdfe6ec, sky: 0xd6e4ef, line: 0xd32f2f, us: 0x0057a8, usHead: 0x2a74bd, them: 0x6b7785, ball: 0xe6007e, dark: 0x0f1b2a };
+const EYE = 1.55; // eye height in a skating stance
+const C = { line: 0xd32f2f, ball: 0xe6007e };
 
 type Status = "clear" | "partial" | "hidden";
 interface Mate { id: string; label: string; chest: THREE.Vector3 }
@@ -72,9 +74,7 @@ function buildRink(scene: THREE.Scene) {
     scene.add(m);
     return m;
   };
-  flat(new THREE.PlaneGeometry(400, 400), C.ground, -0.01, L / 2, MIDY);
-  flat(new THREE.PlaneGeometry(L, W), C.ice, 0, L / 2, MIDY);
-  const lw = 0.12, y = 0.005;
+  const lw = 0.12, y = 0.006; // painted lines, just above the hall's ice
   // outline and centre line
   flat(new THREE.PlaneGeometry(L, lw), C.line, y, L / 2, 0);
   flat(new THREE.PlaneGeometry(L, lw), C.line, y, L / 2, W);
@@ -87,16 +87,9 @@ function buildRink(scene: THREE.Scene) {
   ring(17, -Math.PI / 2, Math.PI, 0); ring(17, Math.PI / 2, Math.PI, L);
   ring(5, -Math.PI / 2, Math.PI, 0); ring(5, Math.PI / 2, Math.PI, L);
   for (const x of [12, L / 2, L - 12]) flat(new THREE.CircleGeometry(0.3, 24), C.line, y, x, MIDY);
-  // low sarg along the long sides
-  const sargMat = new THREE.MeshLambertMaterial({ color: C.dark });
-  for (const z of [-0.1, W + 0.1]) {
-    const s = new THREE.Mesh(new THREE.BoxGeometry(L, 0.15, 0.1), sargMat);
-    s.position.set(L / 2, 0.075, z);
-    scene.add(s);
-  }
   // goals: 3.5 m wide, 2.1 m high
-  const post = new THREE.MeshLambertMaterial({ color: 0xffffff });
-  const net = new THREE.MeshLambertMaterial({ color: 0xc9d4dd, transparent: true, opacity: 0.45 });
+  const post = new THREE.MeshStandardMaterial({ color: 0xd8462b, roughness: 0.5 });
+  const net = new THREE.MeshStandardMaterial({ color: 0xe8edf1, transparent: true, opacity: 0.4 });
   for (const [x, back] of [[0, -1.5], [L, L + 1.5]] as const) {
     for (const dz of [-1.75, 1.75]) {
       const p = new THREE.Mesh(new THREE.BoxGeometry(0.08, 2.1, 0.08), post);
@@ -110,21 +103,6 @@ function buildRink(scene: THREE.Scene) {
     n.position.set((x + back) / 2, 1.05, MIDY);
     scene.add(n);
   }
-}
-
-function buildPlayer(color: number, head: number, dir: number) {
-  const g = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 1.25, 16), new THREE.MeshLambertMaterial({ color }));
-  body.position.y = 0.2 + 1.25 / 2;
-  const hd = new THREE.Mesh(new THREE.SphereGeometry(0.14, 16, 12), new THREE.MeshLambertMaterial({ color: head }));
-  hd.position.y = 1.62;
-  // the club shows which way he faces
-  const club = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.25, 6), new THREE.MeshLambertMaterial({ color: C.dark }));
-  club.position.set(0.55, 0.5, 0.15);
-  club.rotation.z = Math.PI / 3.2;
-  g.add(body, hd, club);
-  g.rotation.y = (-dir * Math.PI) / 180;
-  return { group: g };
 }
 
 export default function View3D({ pieces, step, viewer, k, count, onStep, onClose }: {
@@ -147,32 +125,32 @@ export default function View3D({ pieces, step, viewer, k, count, onStep, onClose
   useEffect(() => {
     const host = hostRef.current!;
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.setSize(host.clientWidth, host.clientHeight, false);
     host.appendChild(renderer.domElement);
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(C.sky);
-    scene.fog = new THREE.Fog(C.sky, 120, 260);
-    scene.add(new THREE.HemisphereLight(0xffffff, 0xb0bcc8, 2.2));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.2);
-    sun.position.set(30, 60, 20);
-    scene.add(sun);
+    const { mirror } = buildHall(scene, renderer);
     buildRink(scene);
 
     const pos = step.pos;
     const self = pos[viewer];
     const mySide = me?.side ?? "us";
     const mates: Mate[] = [];
-    for (const pc of pieces) {
+    const skaters: ((t: number) => void)[] = [];
+    pieces.forEach((pc, i) => {
       const p = pos[pc.id];
-      if (!p || pc.id === viewer) continue;
+      if (!p || pc.id === viewer) return;
       const us = pc.side === "us";
-      const { group } = buildPlayer(us ? C.us : C.them, us ? C.usHead : 0x8a95a2, p.dir);
-      group.position.set(p.x, 0, p.y);
-      scene.add(group);
+      const sk = buildSkater(us ? KIT_US : KIT_THEM, { phase: (i * 2.399) % (Math.PI * 2), holder: step.ball.holder === pc.id });
+      sk.root.position.set(p.x, 0, p.y);
+      sk.root.rotation.y = (-p.dir * Math.PI) / 180;
+      scene.add(sk.root);
+      skaters.push(sk.update);
       if (pc.side === mySide) {
         const tag = pc.label || "M";
         const label = textSprite(tag, us ? "#0057A8" : "#6B7785");
-        label.position.set(p.x, 2.15, p.y);
+        label.position.set(p.x, 2.05, p.y);
         scene.add(label);
         const chest = new THREE.Vector3(p.x, 1.15, p.y);
         mates.push({ id: pc.id, label: tag, chest });
@@ -183,11 +161,21 @@ export default function View3D({ pieces, step, viewer, k, count, onStep, onClose
           scene.add(r);
         }
       }
-    }
+    });
     const [bx, bz] = ballPoint(step.ball, pos);
-    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 12), new THREE.MeshLambertMaterial({ color: C.ball, emissive: 0x550030 }));
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 12), new THREE.MeshStandardMaterial({ color: C.ball, emissive: 0x550030, roughness: 0.4 }));
     ball.position.set(bx, 0.08, bz);
     scene.add(ball);
+
+    // labels and rings are screen overlays: keep them out of the ice reflection
+    const overlays: THREE.Object3D[] = [];
+    scene.traverse(o => { if ((o as THREE.Sprite).isSprite) overlays.push(o); });
+    const reflect = mirror.onBeforeRender.bind(mirror);
+    mirror.onBeforeRender = (...args) => {
+      overlays.forEach(o => (o.visible = false));
+      reflect(...args);
+      overlays.forEach(o => (o.visible = true));
+    };
 
     const eye = new THREE.Vector3(self.x, EYE, self.y);
 
@@ -195,7 +183,7 @@ export default function View3D({ pieces, step, viewer, k, count, onStep, onClose
     camera.position.copy(eye);
     let yaw = (self.dir * Math.PI) / 180, pitch = -0.12;
 
-    const render = () => {
+    const aim = () => {
       const w = host.clientWidth, h = host.clientHeight;
       renderer.setSize(w, h, false);
       const aspect = w / h;
@@ -204,8 +192,11 @@ export default function View3D({ pieces, step, viewer, k, count, onStep, onClose
       camera.fov = v; camera.aspect = aspect; camera.updateProjectionMatrix();
       const look = new THREE.Vector3(Math.cos(yaw) * Math.cos(pitch), Math.sin(pitch), Math.sin(yaw) * Math.cos(pitch));
       camera.lookAt(eye.clone().add(look));
-      renderer.render(scene, camera);
+      camera.updateMatrixWorld();
+      edgesFor(w, h);
+    };
 
+    const edgesFor = (w: number, h: number) => {
       // arrows at the screen edge for teammates outside the picture
       const out: Edge[] = [];
       const pad = 34;
@@ -228,7 +219,19 @@ export default function View3D({ pieces, step, viewer, k, count, onStep, onClose
       }
       setEdges(out);
     };
-    render();
+
+    // slow skating in place; skip the work when the page is hidden or motion is reduced
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const t0 = performance.now();
+    let raf = 0;
+    const frame = (now: number) => {
+      const t = (now - t0) / 1000;
+      for (const u of skaters) u(still ? 0 : t);
+      renderer.render(scene, camera);
+      if (!still) raf = requestAnimationFrame(frame);
+    };
+    aim();
+    raf = requestAnimationFrame(frame);
 
     // drag to turn the head; the gaze stays where you leave it
     let drag: { x: number; y: number; yaw: number; pitch: number } | null = null;
@@ -240,17 +243,19 @@ export default function View3D({ pieces, step, viewer, k, count, onStep, onClose
       const k = (camera.fov * Math.PI) / 180 / host.clientHeight;
       yaw = drag.yaw - (e.clientX - drag.x) * k;
       pitch = Math.max(-1.2, Math.min(0.6, drag.pitch + (e.clientY - drag.y) * k));
-      requestAnimationFrame(render);
+      aim();
+      if (still) renderer.render(scene, camera);
     };
     const up = () => { drag = null; };
     el.addEventListener("pointerdown", down);
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerup", up);
     el.addEventListener("pointercancel", up);
-    const ro = new ResizeObserver(() => render());
+    const ro = new ResizeObserver(() => { aim(); if (still) renderer.render(scene, camera); });
     ro.observe(host);
 
     return () => {
+      cancelAnimationFrame(raf);
       ro.disconnect();
       el.removeEventListener("pointerdown", down);
       el.removeEventListener("pointermove", move);
@@ -262,6 +267,7 @@ export default function View3D({ pieces, step, viewer, k, count, onStep, onClose
         const mat = m.material as THREE.Material | THREE.Material[] | undefined;
         (Array.isArray(mat) ? mat : mat ? [mat] : []).forEach(x => { (x as THREE.SpriteMaterial).map?.dispose(); x.dispose(); });
       });
+      mirror.dispose();
       renderer.dispose();
       el.remove();
     };
