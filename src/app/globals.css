@@ -335,3 +335,35 @@ details.adv[open] summary{margin-bottom:6px}
 .remote-choice{display:flex;flex-direction:column;gap:10px;margin-top:auto}
 .remote-choice p{margin:0;font:800 30px var(--head);text-transform:uppercase}
 .remote-choice .btn{min-height:68px;font-size:22px}
+
+/* ---------- video export ---------- */
+.pop-card.vx{position:relative;max-width:520px;max-height:calc(100dvh - 32px);overflow-y:auto}
+.vx-close{position:absolute;top:8px;right:8px;width:40px;height:40px;padding:0;border:0;border-radius:0;background:transparent;cursor:pointer;
+  font-size:20px;color:var(--skiffer)}
+.vx-close:hover{background:var(--frost);color:var(--natt)}
+.vx-close:focus-visible{outline:2px solid var(--rosa);outline-offset:2px}
+.vx-stage{display:flex;justify-content:center;background:var(--natt)}
+.vx-stage[hidden]{display:none}
+.vx-canvas,.vx-video{display:block;max-width:100%;max-height:min(52dvh, 420px);width:auto;height:auto;aspect-ratio:16/9}
+.vx-stage.tall .vx-canvas,.vx-stage.tall .vx-video{aspect-ratio:9/16}
+.vx-canvas[hidden]{display:none}
+.vx-big{min-height:64px;font-size:24px}
+.vx-note{margin:0;font-size:14px;color:var(--skiffer)}
+.vx-err{margin:0;color:var(--rod);font-weight:600}
+.vx-bar{height:12px;background:var(--frost);border:2px solid var(--natt)}
+.vx-bar span{display:block;height:100%;background:var(--rosa);transition:width .2s linear}
+.vx-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.vx-pct{flex:1;font:800 20px var(--head);letter-spacing:.04em;text-transform:uppercase;font-variant-numeric:tabular-nums;color:var(--natt)}
+.vx-link{display:inline-flex;align-items:center;text-decoration:none}
+.vx-more summary{cursor:pointer;font:700 16px var(--head);letter-spacing:.06em;text-transform:uppercase;color:var(--morkrosa);min-height:36px;display:flex;align-items:center}
+.vx-more summary:focus-visible{outline:2px solid var(--rosa);outline-offset:2px}
+.vx-opts{display:grid;grid-template-columns:auto 1fr;gap:10px 12px;align-items:center;padding-top:8px}
+.vx-lbl{font-size:13px;font-weight:600;color:var(--skiffer)}
+.vx-seg{display:flex;flex-wrap:wrap;border:2px solid var(--natt);width:max-content;max-width:100%}
+.vx-seg button{min-height:36px;padding:0 10px;border:0;border-radius:0;background:var(--is);cursor:pointer;
+  font:800 15px var(--head);letter-spacing:.05em;text-transform:uppercase;color:var(--natt);transition:background .15s}
+.vx-seg button + button{border-left:2px solid var(--natt)}
+.vx-seg button:hover{background:var(--frost)}
+.vx-seg button[aria-pressed="true"]{background:var(--natt);color:#fff}
+.vx-seg button:focus-visible{outline:2px solid var(--rosa);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.vx-bar span{transition:none}}
