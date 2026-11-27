@@ -316,3 +316,22 @@ details.adv[open] summary{margin-bottom:6px}
 .tagadd input{flex:1;min-width:0;min-height:44px;padding:0 12px;border:2px solid var(--natt);border-radius:0;background:#fff;font-size:16px}
 .tagadd input:focus{outline:2px solid var(--rosa);outline-offset:-2px}
 .nomatch{color:var(--skiffer);margin:0}
+
+/* ---------- presentation and remote ---------- */
+.present .name{font-size:clamp(32px, 4vw, 56px)}
+.present .step-text{font-size:clamp(26px, 3.4vw, 46px)}
+.present .count{font-size:clamp(20px, 2.4vw, 32px)}
+.present .task{font-size:20px}
+.present-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px}
+.present-code{font:700 15px var(--head);letter-spacing:.05em;text-transform:uppercase;color:var(--skiffer)}
+.present-code b{font-size:26px;color:var(--natt);letter-spacing:.12em;margin-left:4px}
+.remote{max-width:520px;margin:0 auto;min-height:100dvh;padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+  display:flex;flex-direction:column;gap:18px}
+.remote-step{margin:0;font-size:18px;line-height:1.35}
+.remote-step b{font:800 22px var(--head);text-transform:uppercase;letter-spacing:.04em}
+.remote-pad{display:grid;grid-template-columns:1fr 2fr;gap:10px;margin-top:auto}
+.remote-pad .btn{min-height:72px;font-size:22px}
+.remote-pad .big{grid-row:span 2;min-height:154px;font-size:30px}
+.remote-choice{display:flex;flex-direction:column;gap:10px;margin-top:auto}
+.remote-choice p{margin:0;font:800 30px var(--head);text-transform:uppercase}
+.remote-choice .btn{min-height:68px;font-size:22px}

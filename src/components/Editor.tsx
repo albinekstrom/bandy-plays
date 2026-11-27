@@ -17,6 +17,7 @@ import { autoPlace } from "@/lib/auto";
 import { spaceControl, CELL } from "@/lib/space";
 import { taskFor } from "@/lib/tasks";
 import Rink from "./Rink";
+import type { ScreenState } from "./RemoteControl";
 
 // three.js is only loaded when someone opens the 3D view
 const View3D = dynamic(() => import("./View3D"), { ssr: false });
@@ -48,10 +49,11 @@ interface Quiz {
   feedback: { ok: boolean; tapped: string; right: string[] } | null;
 }
 
-export default function Editor({ initial, readOnly = false, role }: {
+export default function Editor({ initial, readOnly = false, role, present = false }: {
   initial: Play;
   readOnly?: boolean;
-  role?: string; // a shared "Min uppgift" link: the label of the player it is for
+  role?: string;     // a shared "Min uppgift" link: the label of the player it is for
+  present?: boolean; // presentation mode: big screen, keyboard/clicker and phone remote
 }) {
   const [name, setName] = useState(initial.name);
   const [data, setData] = useState<PlayData>({ pieces: initial.pieces, steps: initial.steps, variants: initial.variants ?? [] });
@@ -568,12 +570,78 @@ export default function Editor({ initial, readOnly = false, role }: {
     setMode(m);
   };
 
+  /* ---------- presentation: keyboard, clicker and the phone remote ---------- */
+  const [remoteCode, setRemoteCode] = useState<string | null>(null);
+  const cmds = useRef<Record<string, (arg?: string) => void>>({});
+  useLayoutEffect(() => {
+    cmds.current = {
+      next: () => { if (!playing && !choice) play(kk, false); },
+      prev: () => { stop(); setChoice(null); setK(Math.max(0, kk - 1)); },
+      first: () => { stop(); setChoice(null); setLine(null); setK(0); },
+      all: () => { setChoice(null); setLine(null); play(0, true, { line: null }); },
+      stop: () => stop(),
+      pick: (id?: string) => choice?.pick(id === "main" ? null : id ?? null),
+    };
+  });
+  useEffect(() => {
+    if (!present) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement).closest("input, textarea, select")) return;
+      const c = cmds.current;
+      if (["ArrowRight", " ", "PageDown", "Enter"].includes(e.key)) { e.preventDefault(); c.next(); }
+      else if (["ArrowLeft", "PageUp"].includes(e.key)) { e.preventDefault(); c.prev(); }
+      else if (e.key === "Home") c.first();
+      else if (e.key === "a") c.all();
+      else if (e.key === "f") document.documentElement.requestFullscreen?.().catch(() => {});
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [present]);
+  // open a remote session, then poll it for commands from the phone
+  useEffect(() => {
+    if (!present) return;
+    let alive = true, seq = 0, code = "";
+    let timer: ReturnType<typeof setInterval> | undefined;
+    (async () => {
+      const res = await fetch("/api/fjarr", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ playId: initial.id }) });
+      if (!alive || !res.ok) return;
+      code = (await res.json()).code;
+      setRemoteCode(code);
+      timer = setInterval(async () => {
+        try {
+          const r = await (await fetch(`/api/fjarr/${code}`, { cache: "no-store" })).json();
+          if (r.seq > seq) {
+            const fresh = seq > 0 || r.seq === 1; // ignore a command left from before we joined
+            seq = r.seq;
+            if (fresh && r.cmd) { const [c, arg] = String(r.cmd).split(":"); cmds.current[c]?.(arg); }
+          }
+        } catch { /* next tick */ }
+      }, 600);
+    })();
+    return () => { alive = false; if (timer) clearInterval(timer); };
+  }, [present, initial.id]);
+  // tell the phone what the screen shows
+  useEffect(() => {
+    if (!present || !remoteCode) return;
+    const state: ScreenState = {
+      name, k: anim ? anim.from : kk, n: steps.length, text: shownStep.text, playing,
+      line: variants.length ? lineName(data, line) : "",
+      choice: choice ? choice.options.map(o => ({ id: o.line ?? "main", label: o.badge ? (NAMES[o.badge] ?? o.badge) : o.name, badge: o.badge })) : null,
+    };
+    const t = setTimeout(() => {
+      fetch(`/api/fjarr/${remoteCode}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state }) }).catch(() => {});
+    }, 150);
+    return () => clearTimeout(t);
+  }, [present, remoteCode, name, kk, anim, steps.length, shownStep.text, playing, choice, line, variants.length, data]);
+
   /* ---------- render ---------- */
   const lbl = portrait ? "rotate(90)" : undefined;
   const holder = shownStep.ball.holder ? pieceById[shownStep.ball.holder] : null;
   const saveText = { saved: "Sparat", saving: "Sparar…", dirty: "Ändrat", error: "Kunde inte spara" }[save];
   const hideArrows = quizAsking; // the arrows would give the answer away
-  let hint: React.ReactNode = mode === "play"
+  let hint: React.ReactNode = present
+    ? "Styr med → / mellanslag, ← tillbaka, A spelar allt, F helskärm. Eller med mobilen."
+    : mode === "play"
     ? "Tryck på en spelare för att se hans synfält. Dubbeltryck eller Se i 3D för att stå i hans skor."
     : TOOLS.find(t => t.id === tool)!.hint;
   if (mode === "edit" && line && kk < own) hint = "Steg före förgreningen är gemensamma: ändringar här gäller alla spår.";
@@ -585,12 +653,22 @@ export default function Editor({ initial, readOnly = false, role }: {
   }
 
   return (
-    <main className="wrap editor">
+    <main className={"wrap editor" + (present ? " present" : "")}>
       <header className="top">
         <div className="title">
-          {readOnly ? <span className="kicker">Delat spel</span> : <Link className="back" href="/">← Mina spel</Link>}
+          {present ? <Link className="back" href={`/spel/${initial.id}`}>← Avsluta presentation</Link>
+            : readOnly ? <span className="kicker">{roleId ? `Din roll: ${NAMES[role!] ?? role}` : "Delat spel"}</span>
+            : <Link className="back" href="/">← Mina spel</Link>}
           <input className="name" value={name} onChange={e => setName(e.target.value)} aria-label="Spelets namn" maxLength={80} readOnly={readOnly || mode === "play"} />
         </div>
+        {present && (
+          <div className="present-bar">
+            <span className="present-code">
+              {remoteCode ? <>Mobil: öppna {typeof window !== "undefined" ? location.host : ""}/fjarr · kod <b>{remoteCode}</b></> : "Ansluter fjärrkontroll…"}
+            </span>
+            <button className="btn ghost" type="button" onClick={() => document.documentElement.requestFullscreen?.().catch(() => {})}>Helskärm</button>
+          </div>
+        )}
         {!readOnly && (
           <div className="bar">
             <div className="modes" role="group" aria-label="Läge">
@@ -841,6 +919,12 @@ export default function Editor({ initial, readOnly = false, role }: {
                 ))}
               </div>
             </div>
+            {!readOnly && mode === "play" && (
+              <div className="more-row">
+                <Link className="btn" href={`/presentera/${initial.id}`}>Presentera på tv</Link>
+                <span className="more-note">Helskärm för tv/projektor, styrs med tangentbord, klickare eller mobilen.</span>
+              </div>
+            )}
             <div className="more-row">
               <button className="tg" type="button" aria-pressed={showThem} onClick={() => setShowThem(v => !v)}>Visa motståndare</button>
               {mode === "edit" && <button className="tg" type="button" onClick={addOpponent} disabled={playing}>+ Motståndare</button>}
