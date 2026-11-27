@@ -1,6 +1,6 @@
 /* Pure play logic: creating plays, resolving positions, animating between steps.
    Shared by the editor (client) and the server. */
-import type { Arrow, Ball, Piece, PlayData, Pos, Pt, Step } from "./types";
+import type { Arrow, ArrowKind, Ball, Piece, PlayData, Pos, Pt, Step } from "./types";
 import { US_START, THEM_START } from "./rink";
 import { along, clamp, curvePts, spline, dist, ease, heading, lerp, lerpAngle, polyLength } from "./geom";
 
@@ -46,6 +46,12 @@ export const SKATE = 6;   // m per second on screen
 export const BALL_SPEED = 20;
 export const TURN = 0.35; // seconds to turn on the spot
 
+/** How an arrow reads: only the ball holder can dribble, so his run is a dribble and anyone else's is a run. */
+export function arrowKind(a: Arrow, step: Step): ArrowKind {
+  if (a.kind === "pass") return "pass";
+  return a.piece && a.piece === step.ball.holder ? "drib" : "run";
+}
+
 const moveArrow = (s: Step, id: string) => s.arrows.find(r => r.kind !== "pass" && r.piece === id);
 
 /** Sampled path of an arrow, with ends pinned to where things are in step k and k+1. */
@@ -63,7 +69,7 @@ export function arrowCurve(a: Arrow, step: Step, next: Step | undefined): Pt[] {
 }
 
 /** Where the ball leaves from: the passer's spot `passAt` of the way through his own run. */
-function passOrigin(step: Step, next: Step | undefined): Pt {
+export function passOrigin(step: Step, next: Step | undefined): Pt {
   const passer = step.ball.holder;
   const run = passer && next?.pos[passer] ? moveArrow(step, passer) : undefined;
   if (!passer || !run) return ballPoint(step.ball, step.pos);
@@ -72,6 +78,9 @@ function passOrigin(step: Step, next: Step | undefined): Pt {
   const p = along(path, u), q = along(path, Math.min(1, u + 0.02)), o = along(path, Math.max(0, u - 0.02));
   return carried({ x: p[0], y: p[1], dir: heading(o, q) });
 }
+
+/** The ball holder's run in a step, if he skates (dribbles). */
+export const holderRun = (step: Step) => (step.ball.holder ? moveArrow(step, step.ball.holder) : undefined);
 
 interface Mover { path: Pt[]; len: number; dur: number; startDir: number; endDir: number }
 export interface Plan {
@@ -178,11 +187,54 @@ export function copyStep(s: Step): Step {
   };
 }
 
-/** Move a piece in step k; later steps where it stood still follow along. */
-export function movePiece(steps: Step[], k: number, id: string, to: Partial<Pos>): Step[] {
+/** A new step to follow step k: everyone starts where step k's moves end. */
+export function stepAfter(steps: Step[], k: number, pieces: Piece[]): Step {
+  const cur = steps[k];
+  if (cur.arrows.length && steps[k + 1]) return copyStep(steps[k + 1]);
+  if (!cur.arrows.length) return copyStep(cur);
+  const end = endState(cur, pieces);
+  return { id: uid(), text: "", pos: end.pos, ball: end.ball, arrows: [] };
+}
+
+/** Where everything is once a step's arrows are done: runs at their ends, facing the way
+    they end; a passed ball with the player nearest where the pass ends. */
+export function endState(step: Step, pieces: Piece[]): { pos: Record<string, Pos>; ball: Ball } {
+  const pos = Object.fromEntries(Object.entries(step.pos).map(([k, v]) => [k, { ...v }]));
+  for (const a of step.arrows) {
+    if (a.kind === "pass" || !a.piece || !pos[a.piece]) continue;
+    const path = arrowCurve(a, step, undefined);
+    const e = path[path.length - 1];
+    const dir = path.length > 1 ? Math.round(heading(path[Math.max(0, path.length - 3)], e)) : pos[a.piece].dir;
+    pos[a.piece] = { x: e[0], y: e[1], dir };
+  }
+  let ball: Ball = { ...step.ball };
+  const pass = step.arrows.find(a => a.kind === "pass");
+  if (pass) {
+    const e = pass.pts[pass.pts.length - 1];
+    const rec = nearestPiece(pieces, pos, e, 3.2);
+    ball = { holder: rec, x: e[0], y: e[1] };
+  }
+  return { pos, ball };
+}
+
+/** The way a piece faces at the end of its run from step k-1, or null if it didn't skate. */
+export function runEndDir(steps: Step[], k: number, id: string): number | null {
+  const prev = steps[k - 1];
+  const run = prev && moveArrow(prev, id);
+  if (!run) return null;
+  const path = arrowCurve(run, prev, steps[k]);
+  if (path.length < 2 || polyLength(path) < 0.5) return null;
+  return Math.round(heading(path[Math.max(0, path.length - 3)], path[path.length - 1]));
+}
+
+/** Move a piece in step k. With follow, later steps where it stood still follow along
+    (used when a new run sets where he ends up); without it only step k changes, so editing
+    an early step never rearranges the steps already planned after it. */
+export function movePiece(steps: Step[], k: number, id: string, to: Partial<Pos>, follow = false): Step[] {
   const out = steps.slice();
   const old = out[k].pos[id];
   out[k] = { ...out[k], pos: { ...out[k].pos, [id]: { ...old, ...to } } };
+  if (!follow) return out;
   for (let j = k + 1; j < out.length; j++) {
     const prevArrow = out[j - 1].arrows.some(a => a.piece === id);
     const cur = out[j].pos[id];

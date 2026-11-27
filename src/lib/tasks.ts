@@ -2,6 +2,7 @@
    when empty, read off the arrows. */
 import type { Piece, Step } from "./types";
 import { NAMES } from "./rink";
+import { arrowKind } from "./play";
 
 export function taskFor(id: string, step: Step, next: Step | undefined, pieces: Piece[]): { text: string; own: boolean } {
   const own = step.notes?.[id]?.trim();
@@ -13,7 +14,7 @@ export function taskFor(id: string, step: Step, next: Step | undefined, pieces: 
   const parts: string[] = [];
   const pass = step.arrows.find(a => a.kind === "pass");
   const move = step.arrows.find(a => a.kind !== "pass" && a.piece === id);
-  if (move?.kind === "drib") parts.push("Driv bollen dit pilen visar");
+  if (move && arrowKind(move, step) === "drib") parts.push("Driv bollen dit pilen visar");
   else if (move) parts.push("Åk dit pilen visar");
   if (pass && step.ball.holder === id && next?.ball.holder) parts.push(`passa till ${name(next.ball.holder).toLowerCase()}`);
   if (pass && next?.ball.holder === id && step.ball.holder !== id) parts.push("ta emot passningen");

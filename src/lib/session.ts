@@ -25,8 +25,19 @@ export async function makeToken(name: string) {
   return `${name}.${exp}.${await hmac(`${name}.${exp}`)}`;
 }
 
+/* Local development without logging in: everyone is the admin "daniel".
+   Needs DEV_NO_LOGIN=1 in .env.local AND `npm run dev` AND the local file store.
+   `next build` sets NODE_ENV=production, so in a deployed build this is always false;
+   it is also off on Vercel and whenever a real database is connected. */
+export const DEV_NO_LOGIN =
+  process.env.NODE_ENV === "development" && process.env.DEV_NO_LOGIN === "1" && !process.env.VERCEL && !process.env.DATABASE_URL;
+
 /** The logged-in name, or null. */
 export async function tokenUser(token: string | undefined): Promise<string | null> {
+  return (await checkToken(token)) ?? (DEV_NO_LOGIN ? "daniel" : null);
+}
+
+async function checkToken(token: string | undefined): Promise<string | null> {
   if (!token) return null;
   const [name, exp, sig] = token.split(".");
   if (!name || !exp || !sig || Number(exp) < Date.now() / 1000) return null;

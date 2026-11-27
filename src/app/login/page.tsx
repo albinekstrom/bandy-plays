@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import LoginForm from "./LoginForm";
+import { DEV_NO_LOGIN } from "@/lib/session";
 
 export const metadata: Metadata = { title: "Logga in · Bandyspel" };
 
 export default function LoginPage() {
+  if (DEV_NO_LOGIN) redirect("/"); // local dev without login (never in a build)
   return (
     <main className="gate">
       <div className="title"><h1>Bandyspel</h1></div>

@@ -3,8 +3,8 @@
    with MediaRecorder. Browser only. */
 import type { Arrow, Piece, Pos, Pt, Step } from "./types";
 import { L, W, MIDY } from "./rink";
-import { arrowCurve, frameAt, plan, stillFrame, type Frame, type Plan } from "./play";
-import { clamp, wavy } from "./geom";
+import { arrowCurve, arrowKind, frameAt, plan, stillFrame, type Frame, type Plan } from "./play";
+import { clamp } from "./geom";
 
 export interface VideoOpts {
   name: string;
@@ -280,15 +280,15 @@ function drawArrows(sc: Scene, step: Step, next: Step | undefined, alpha: number
     if (a.piece && !sc.showThem && sc.side[a.piece] === "them") continue;
     const pts = arrowCurve(a, step, next);
     if (pts.length < 2) continue;
-    const color = a.kind === "pass" ? C.rosa : C.bla;
+    const kind = arrowKind(a, step);
+    const color = kind === "run" ? C.bla : C.rosa;
     ctx.strokeStyle = color;
-    ctx.globalAlpha = alpha * (a.kind === "run" ? 0.8 : 1);
-    if (a.kind === "pass") { ctx.lineWidth = 0.35; ctx.setLineDash([0.1, 0.9]); }
-    else { ctx.lineWidth = a.kind === "drib" ? 0.4 : 0.3; ctx.setLineDash([]); }
-    const drawn = a.kind === "drib" ? wavy(pts) : pts;
-    polyline(ctx, drawn);
+    ctx.globalAlpha = alpha * (kind === "run" ? 0.8 : 1);
+    if (kind === "pass") { ctx.lineWidth = 0.35; ctx.setLineDash([0.1, 0.9]); }
+    else { ctx.lineWidth = kind === "drib" ? 0.4 : 0.3; ctx.setLineDash([]); }
+    polyline(ctx, pts);
     ctx.setLineDash([]);
-    arrowHead(ctx, drawn, color);
+    arrowHead(ctx, pts, color);
   }
   ctx.globalAlpha = 1;
 }
