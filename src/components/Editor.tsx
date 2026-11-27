@@ -1,6 +1,7 @@
 "use client";
 /* The play editor: draw on the rink step by step, then play it back. */
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Arrow, ArrowKind, Play, PlayData, Pt, Step } from "@/lib/types";
 import { L, W, MIDY, NAMES } from "@/lib/rink";
@@ -10,13 +11,17 @@ import {
 } from "@/lib/play";
 import Rink from "./Rink";
 
-type Tool = "move" | "run" | "drib" | "pass" | "dir" | "erase";
+// three.js is only loaded when someone opens the 3D view
+const View3D = dynamic(() => import("./View3D"), { ssr: false });
+
+type Tool = "move" | "run" | "drib" | "pass" | "dir" | "see" | "erase";
 const TOOLS: { id: Tool; label: string; hint: string }[] = [
   { id: "move", label: "Flytta", hint: "Dra spelare eller boll. Släpp bollen vid en spelare så får hen den." },
   { id: "run", label: "Åkning", hint: "Dra från en spelare dit hen ska åka." },
   { id: "drib", label: "Driver", hint: "Dra från bollhållaren dit hen driver bollen." },
   { id: "pass", label: "Pass", hint: "Dra från bollen till mottagaren." },
   { id: "dir", label: "Riktning", hint: "Dra från en spelare åt det håll hen ska titta." },
+  { id: "see", label: "Syn", hint: "Tryck på en spelare för att se hans synfält. Se i 3D ställer dig i hans skor." },
   { id: "erase", label: "Sudda", hint: "Tryck på en pil eller en motståndare för att ta bort den." },
 ];
 const REACH = 3.2; // metres: generous for fingers
@@ -40,6 +45,8 @@ export default function Editor({ initial }: { initial: Play }) {
   const [anim, setAnim] = useState<{ from: number; u: number } | null>(null);
   const [save, setSave] = useState<Save>("saved");
   const [portrait, setPortrait] = useState(false);
+  const [viewer, setViewer] = useState<string | null>(null);
+  const [show3d, setShow3d] = useState(false);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const worldRef = useRef<SVGGElement>(null);
@@ -181,6 +188,9 @@ export default function Editor({ initial }: { initial: Play }) {
     } else if (tool === "dir") {
       const id = nearestPiece(visible, pos, p, REACH);
       if (id) d = { kind: "dir", id };
+    } else if (tool === "see") {
+      setViewer(nearestPiece(visible, pos, p, REACH) ?? viewer);
+      return;
     } else if (tool === "erase") {
       erase(p);
       return;
@@ -363,6 +373,7 @@ export default function Editor({ initial }: { initial: Play }) {
           aria-label="Bandyplan sedd uppifrån. Vi anfaller åt höger."
         >
           <defs>
+            <clipPath id="rink-clip"><rect x={0} y={0} width={L} height={W} /></clipPath>
             {(["run", "drib", "pass"] as const).map(kind => (
               <marker key={kind} id={"ah-" + kind} viewBox="0 0 10 10" refX="7" refY="5" markerWidth="2.8" markerHeight="2.8" markerUnits="userSpaceOnUse" orient="auto">
                 <path d="M0 0 L10 5 L0 10 Z" className={"ah ah-" + kind} />
@@ -371,6 +382,21 @@ export default function Editor({ initial }: { initial: Play }) {
           </defs>
           <g ref={worldRef} transform={portrait ? `matrix(0 -1 1 0 0 ${L})` : undefined}>
             <Rink portrait={portrait} />
+
+            {tool === "see" && viewer && frame.pos[viewer] && (() => {
+              // what he sees: clear in front (±55°), out of the corner of the eye (±100°)
+              const p = frame.pos[viewer];
+              const wedge = (half: number) => {
+                const a = ((p.dir - half) * Math.PI) / 180, b = ((p.dir + half) * Math.PI) / 180, r = 140;
+                return `M${p.x} ${p.y} L${p.x + r * Math.cos(a)} ${p.y + r * Math.sin(a)} A${r} ${r} 0 ${half > 90 ? 1 : 0} 1 ${p.x + r * Math.cos(b)} ${p.y + r * Math.sin(b)} Z`;
+              };
+              return (
+                <g clipPath="url(#rink-clip)" className="cone">
+                  <path d={wedge(100)} className="cone-side" />
+                  <path d={wedge(55)} className="cone-main" />
+                </g>
+              );
+            })()}
 
             <g className={anim ? "trails playing" : "trails"}>
               {shownStep.arrows.map(a => {
@@ -400,7 +426,7 @@ export default function Editor({ initial }: { initial: Play }) {
                 return (
                   <g key={pc.id} transform={`translate(${p.x.toFixed(2)} ${p.y.toFixed(2)})`}>
                     <path className={"nose nose-" + pc.side} d="M1.15 -0.75 L2.05 0 L1.15 0.75 Z" transform={`rotate(${p.dir.toFixed(1)})`} />
-                    <circle className={(pc.side === "us" ? "p-us" : "p-them") + (key ? " key" : "")} r={pc.side === "us" ? 1.4 : 1.2} />
+                    <circle className={(pc.side === "us" ? "p-us" : "p-them") + (key ? " key" : "") + (tool === "see" && viewer === pc.id ? " viewer" : "")} r={pc.side === "us" ? 1.4 : 1.2} />
                     {pc.label && <text className="p-lbl" y={0.05} transform={lbl} style={pc.label.length > 1 ? { fontSize: "1px" } : undefined}>{pc.label}</text>}
                   </g>
                 );
@@ -445,9 +471,23 @@ export default function Editor({ initial }: { initial: Play }) {
           <button className="tg" type="button" onClick={removeStep} disabled={playing || steps.length < 2}>Ta bort steg</button>
           <button className="tg" type="button" onClick={addOpponent} disabled={playing}>+ Motståndare</button>
           <button className="tg" type="button" aria-pressed={showThem} onClick={() => setShowThem(v => !v)}>Visa motståndare</button>
+          {tool === "see" && viewer && (
+            <button className="btn" type="button" onClick={() => { stop(); setShow3d(true); }}>Se i 3D</button>
+          )}
           {holder && <span className="holder">Bollen: {holder.label ? NAMES[holder.label] ?? holder.label : "motståndare"}</span>}
         </div>
       </div>
+      {show3d && viewer && pieceById[viewer] && (
+        <View3D
+          pieces={data.pieces}
+          step={step}
+          viewer={viewer}
+          k={k}
+          count={steps.length}
+          onStep={i => setK(clamp(i, 0, steps.length - 1))}
+          onClose={() => setShow3d(false)}
+        />
+      )}
     </main>
   );
 }
