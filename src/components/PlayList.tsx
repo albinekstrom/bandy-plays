@@ -7,7 +7,7 @@ import { SUGGESTED_TAGS, MAX_TAGS, MAX_TAG_LEN, cleanTags } from "@/lib/tags";
 interface Item { id: string; name: string; date: string; tags?: string[] }
 const lc = (s: string) => s.toLocaleLowerCase("sv");
 
-export default function PlayList({ plays }: { plays: Item[] }) {
+export default function PlayList({ plays, canEdit = false }: { plays: Item[]; canEdit?: boolean }) {
   const [over, setOver] = useState<Record<string, string[]>>({});
   const [q, setQ] = useState("");
   const [sel, setSel] = useState<string[]>([]); // lower-cased
@@ -91,10 +91,12 @@ export default function PlayList({ plays }: { plays: Item[] }) {
                   </span>
                   {tags.length > 0 && <span className="tagrow">{tags.map(t => <span key={t} className="tagpill">{t}</span>)}</span>}
                 </Link>
-                <button className={"btn ghost sm" + (isOpen ? " on" : "")} type="button" aria-expanded={isOpen}
-                  onClick={() => { setOpen(isOpen ? null : p.id); setDraft(""); setErr(""); }}>Taggar</button>
-                <DeleteButton id={p.id} />
-                {isOpen && (
+                {canEdit && <>
+                  <button className={"btn ghost sm" + (isOpen ? " on" : "")} type="button" aria-expanded={isOpen}
+                    onClick={() => { setOpen(isOpen ? null : p.id); setDraft(""); setErr(""); }}>Taggar</button>
+                  <DeleteButton id={p.id} />
+                </>}
+                {canEdit && isOpen && (
                   <div className="tagedit">
                     <div className="chips">
                       {SUGGESTED_TAGS.map(t => (

@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { loggedIn } from "@/lib/auth";
+import { loggedIn, isAdmin } from "@/lib/auth";
 import { store } from "@/lib/store";
 import { isPlayData } from "@/lib/play";
 
 const unauthorized = () => NextResponse.json({ error: "unauthorized" }, { status: 401 });
+const forbidden = () => NextResponse.json({ error: "forbidden" }, { status: 403 });
 
 export async function GET(_req: Request, ctx: RouteContext<"/api/plays/[id]">) {
   if (!(await loggedIn())) return unauthorized();
@@ -12,7 +13,7 @@ export async function GET(_req: Request, ctx: RouteContext<"/api/plays/[id]">) {
 }
 
 export async function PUT(req: Request, ctx: RouteContext<"/api/plays/[id]">) {
-  if (!(await loggedIn())) return unauthorized();
+  if (!(await isAdmin())) return forbidden();
   const body = await req.json().catch(() => null);
   const name = typeof body?.name === "string" ? body.name.trim().slice(0, 80) || "Namnlöst" : null;
   if (!name || !isPlayData(body)) return NextResponse.json({ error: "bad request" }, { status: 400 });
@@ -21,7 +22,7 @@ export async function PUT(req: Request, ctx: RouteContext<"/api/plays/[id]">) {
 }
 
 export async function DELETE(_req: Request, ctx: RouteContext<"/api/plays/[id]">) {
-  if (!(await loggedIn())) return unauthorized();
+  if (!(await isAdmin())) return forbidden();
   await store().remove((await ctx.params).id);
   return new NextResponse(null, { status: 204 });
 }

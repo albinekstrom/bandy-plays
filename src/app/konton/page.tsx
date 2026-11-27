@@ -1,16 +1,19 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { loggedIn } from "@/lib/auth";
-import { users } from "@/lib/users";
-import { AddUserForm, ChangePasswordForm } from "./forms";
+import { currentUser } from "@/lib/auth";
+import { usersReady, ROLE_NAMES } from "@/lib/users";
+import { setUserRole } from "./actions";
+import { AddUserForm, ChangePasswordForm, TeamCodeForm } from "./forms";
 
 export const metadata: Metadata = { title: "Konton · Bandyspel" };
 
 export default async function Accounts() {
-  const me = await loggedIn();
+  const me = await currentUser();
   if (!me) redirect("/login");
-  const names = await users().names();
+  const admin = me.role === "admin";
+  const all = admin ? await (await usersReady()).list() : [];
+  const admins = all.filter(u => u.role === "admin").length;
   return (
     <main className="page">
       <header className="top">
@@ -19,15 +22,36 @@ export default async function Accounts() {
           <h1>Konton</h1>
         </div>
       </header>
-      <section className="acc">
-        <h2>Alla konton</h2>
-        <p className="acc-note">Alla som loggar in ser och kan ändra samma spel.</p>
-        <ul className="acc-list">{names.map(n => <li key={n}>{n}{n === me ? " (du)" : ""}</li>)}</ul>
-      </section>
-      <section className="acc">
-        <h2>Lägg till konto</h2>
-        <AddUserForm />
-      </section>
+      <p className="acc-note">Inloggad som <b>{me.name}</b> · {ROLE_NAMES[me.role]}</p>
+      {admin && <>
+        <section className="acc">
+          <h2>Alla konton</h2>
+          <p className="acc-note">Admin kan ändra spel och konton. Spelare kan titta, köra quiz och 3D.</p>
+          <ul className="acc-rows">
+            {all.map(u => (
+              <li key={u.name}>
+                <span className="acc-name">{u.name}{u.name === me.name ? " (du)" : ""}</span>
+                <form action={setUserRole} className="seg-mini" aria-label={`Nivå för ${u.name}`}>
+                  <input type="hidden" name="name" value={u.name} />
+                  {(["player", "admin"] as const).map(r => (
+                    <button key={r} type="submit" name="role" value={r} aria-pressed={u.role === r}
+                      disabled={u.role === r || (r === "player" && u.role === "admin" && admins <= 1)}>{ROLE_NAMES[r]}</button>
+                  ))}
+                </form>
+              </li>
+            ))}
+          </ul>
+        </section>
+        <section className="acc">
+          <h2>Lägg till konto</h2>
+          <AddUserForm />
+        </section>
+        <section className="acc">
+          <h2>Lagkod</h2>
+          <p className="acc-note">Med lagkoden kan spelare skapa egna konton under &quot;Skapa konto&quot; på inloggningssidan. De blir spelare. Från början är koden samma som det gamla gemensamma lösenordet.</p>
+          <TeamCodeForm />
+        </section>
+      </>}
       <section className="acc">
         <h2>Byt ditt lösenord</h2>
         <ChangePasswordForm />

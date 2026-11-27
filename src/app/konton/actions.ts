@@ -1,24 +1,29 @@
 "use server";
-import { loggedIn } from "@/lib/auth";
-import { users, hashPassword, checkPassword, NAME_RE, MIN_PASSWORD } from "@/lib/users";
+import { revalidatePath } from "next/cache";
+import { loggedIn, isAdmin, currentUser } from "@/lib/auth";
+import { usersReady, hashPassword, checkPassword, NAME_RE, MIN_PASSWORD, MIN_TEAM_CODE, type Role } from "@/lib/users";
 
 export type Result = { ok: boolean; msg: string } | null;
 
 export async function addUser(_prev: Result, form: FormData): Promise<Result> {
-  if (!(await loggedIn())) return { ok: false, msg: "Du är inte inloggad" };
+  if (!(await isAdmin())) return { ok: false, msg: "Bara admin kan lägga till konton" };
+  const role: Role = form.get("role") === "admin" ? "admin" : "player";
+  const u = await usersReady();
   const name = String(form.get("name") ?? "").trim().toLowerCase();
   const pass = String(form.get("pass") ?? ""), pass2 = String(form.get("pass2") ?? "");
   if (!NAME_RE.test(name)) return { ok: false, msg: "Namnet ska vara 2–20 små bokstäver (a–ö), inga mellanslag" };
   if (pass.length < MIN_PASSWORD) return { ok: false, msg: `Lösenordet ska vara minst ${MIN_PASSWORD} tecken` };
   if (pass !== pass2) return { ok: false, msg: "Lösenorden är inte lika" };
-  if (!(await users().add(name, await hashPassword(pass)))) return { ok: false, msg: "Namnet är upptaget" };
+  if (!(await u.add(name, await hashPassword(pass), role))) return { ok: false, msg: "Namnet är upptaget" };
+  revalidatePath("/konton");
   return { ok: true, msg: `Kontot "${name}" är skapat` };
 }
 
 export async function changePassword(_prev: Result, form: FormData): Promise<Result> {
   const me = await loggedIn();
   if (!me) return { ok: false, msg: "Du är inte inloggad" };
-  const hash = await users().hash(me);
+  const u = await usersReady();
+  const hash = await u.hash(me);
   if (!hash || !(await checkPassword(String(form.get("old") ?? ""), hash))) {
     await new Promise(r => setTimeout(r, 600));
     return { ok: false, msg: "Nuvarande lösenord stämmer inte" };
@@ -26,6 +31,28 @@ export async function changePassword(_prev: Result, form: FormData): Promise<Res
   const pass = String(form.get("pass") ?? ""), pass2 = String(form.get("pass2") ?? "");
   if (pass.length < MIN_PASSWORD) return { ok: false, msg: `Lösenordet ska vara minst ${MIN_PASSWORD} tecken` };
   if (pass !== pass2) return { ok: false, msg: "Lösenorden är inte lika" };
-  await users().setHash(me, await hashPassword(pass));
+  await u.setHash(me, await hashPassword(pass));
   return { ok: true, msg: "Lösenordet är bytt" };
+}
+
+export async function changeTeamCode(_prev: Result, form: FormData): Promise<Result> {
+  if (!(await isAdmin())) return { ok: false, msg: "Bara admin kan byta lagkod" };
+  const code = String(form.get("code") ?? ""), code2 = String(form.get("code2") ?? "");
+  if (code.length < MIN_TEAM_CODE) return { ok: false, msg: `Lagkoden ska vara minst ${MIN_TEAM_CODE} tecken` };
+  if (code !== code2) return { ok: false, msg: "Lagkoderna är inte lika" };
+  await (await usersReady()).setTeamCode(await hashPassword(code));
+  return { ok: true, msg: "Lagkoden är bytt. Ge den nya koden till laget." };
+}
+
+/* Admin: make someone admin or player. There is always at least one admin. */
+export async function setUserRole(form: FormData) {
+  const me = await currentUser();
+  if (me?.role !== "admin") return;
+  const name = String(form.get("name") ?? ""), role: Role = form.get("role") === "admin" ? "admin" : "player";
+  const u = await usersReady();
+  const all = await u.list();
+  if (!all.some(x => x.name === name)) return;
+  if (role === "player" && all.filter(x => x.role === "admin" && x.name !== name).length === 0) return;
+  await u.setRole(name, role);
+  revalidatePath("/konton");
 }

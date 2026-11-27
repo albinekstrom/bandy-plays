@@ -1,21 +1,15 @@
 import type { Metadata } from "next";
-import { connection } from "next/server";
-import { users } from "@/lib/users";
+import Link from "next/link";
 import LoginForm from "./LoginForm";
-import SetupForm from "./SetupForm";
 
 export const metadata: Metadata = { title: "Logga in · Bandyspel" };
 
-export default async function LoginPage() {
-  await connection();
-  const first = (await users().count()) === 0;
+export default function LoginPage() {
   return (
     <main className="gate">
-      <div className="title">
-        {first && <span className="kicker">Första kontot</span>}
-        <h1>Bandyspel</h1>
-      </div>
-      {first ? <SetupForm /> : <LoginForm />}
+      <div className="title"><h1>Bandyspel</h1></div>
+      <LoginForm />
+      <p className="gate-alt">Ny i laget? <Link href="/registrera">Skapa konto</Link></p>
     </main>
   );
 }

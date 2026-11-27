@@ -383,3 +383,11 @@ details.adv[open] summary{margin-bottom:6px}
 .acc-form .btn{align-self:flex-start}
 .msg.ok{color:#1a7f45}
 a.btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+.gate-alt{margin:0;font-size:14px;color:var(--skiffer)}
+.gate-alt a{color:var(--morkrosa);font-weight:600}
+.acc-rows{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.acc-rows li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--isgra)}
+.acc-name{font:700 18px var(--head);letter-spacing:.04em}
+.seg-mini button[disabled]{cursor:default}
+.seg-mini button[disabled]:not([aria-pressed="true"]){opacity:.4}
+select.field{appearance:auto}
