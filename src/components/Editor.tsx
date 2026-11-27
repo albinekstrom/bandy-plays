@@ -50,9 +50,10 @@ interface Quiz {
   feedback: { ok: boolean; tapped: string; right: string[] } | null;
 }
 
-export default function Editor({ initial, readOnly = false, role, present = false }: {
+export default function Editor({ initial, readOnly = false, shared = false, role, present = false }: {
   initial: Play;
   readOnly?: boolean;
+  shared?: boolean;  // opened from a share link (no login): no way back to the list
   role?: string;     // a shared "Min uppgift" link: the label of the player it is for
   present?: boolean; // presentation mode: big screen, keyboard/clicker and phone remote
 }) {
@@ -359,12 +360,12 @@ export default function Editor({ initial, readOnly = false, role, present = fals
     let d: Drag | null = null;
 
     if (tool === "move") {
-      if (dist(p, ball) < 1.8) d = { kind: "ball" };
-      else {
-        const id = nearestPiece(visible, pos, p, REACH);
-        if (id) d = { kind: "piece", id };
-        setSel(id);
-      }
+      // whichever is closer to the finger: the ball or a player (the carrier stands right behind the ball)
+      const id = nearestPiece(visible, pos, p, REACH);
+      const toPiece = id ? dist(p, [pos[id].x, pos[id].y]) : Infinity;
+      if (dist(p, ball) < Math.min(1.8, toPiece)) d = { kind: "ball" };
+      else if (id) { d = { kind: "piece", id }; setSel(id); }
+      else setSel(null);
     } else if (tool === "run" || tool === "drib") {
       const id = nearestPiece(visible, pos, p, REACH);
       if (id) d = { kind: "stroke", arrow: tool, piece: id, pts: [[pos[id].x, pos[id].y]] };
@@ -552,7 +553,7 @@ export default function Editor({ initial, readOnly = false, role, present = fals
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).closest("input, textarea")) return;
+      if ((e.target as Element | null)?.closest?.("input, textarea")) return;
       if ((e.ctrlKey || e.metaKey) && e.key === "z") { e.preventDefault(); undo(); }
     };
     addEventListener("keydown", onKey);
@@ -588,7 +589,7 @@ export default function Editor({ initial, readOnly = false, role, present = fals
   useEffect(() => {
     if (!present) return;
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).closest("input, textarea, select")) return;
+      if ((e.target as Element | null)?.closest?.("input, textarea, select")) return;
       const c = cmds.current;
       if (["ArrowRight", " ", "PageDown", "Enter"].includes(e.key)) { e.preventDefault(); c.next(); }
       else if (["ArrowLeft", "PageUp"].includes(e.key)) { e.preventDefault(); c.prev(); }
@@ -659,7 +660,7 @@ export default function Editor({ initial, readOnly = false, role, present = fals
       <header className="top">
         <div className="title">
           {present ? <Link className="back" href={`/spel/${initial.id}`}>← Avsluta presentation</Link>
-            : readOnly ? <span className="kicker">{roleId ? `Din roll: ${NAMES[role!] ?? role}` : "Delat spel"}</span>
+            : shared ? <span className="kicker">{roleId ? `Din roll: ${NAMES[role!] ?? role}` : "Delat spel"}</span>
             : <Link className="back" href="/">← Mina spel</Link>}
           <input className="name" value={name} onChange={e => setName(e.target.value)} aria-label="Spelets namn" maxLength={80} readOnly={readOnly || mode === "play"} />
         </div>
@@ -912,7 +913,11 @@ export default function Editor({ initial, readOnly = false, role, present = fals
           {holder && !hideArrows && <span className="holder">Bollen: {holder.label ? NAMES[holder.label] ?? holder.label : "motståndare"}</span>}
         </div>
         {more && (
-          <div className="more">
+          <div className="more" role="dialog" aria-label="Fler inställningar">
+            <div className="more-head">
+              <span>Fler inställningar</span>
+              <button type="button" className="more-x" aria-label="Stäng" onClick={() => setMore(false)}>✕</button>
+            </div>
             <div className="more-row">
               <span className="more-lbl">Tempo</span>
               <div className="seg-mini" role="group" aria-label="Uppspelningstempo">

@@ -13,5 +13,5 @@ export default async function SharedPlay({ params, searchParams }: PageProps<"/d
   if (!/^[A-Za-z0-9_-]{20,40}$/.test(token)) notFound();
   const play = await store().byShare(token);
   if (!play) notFound();
-  return <Editor initial={play} readOnly role={role} />;
+  return <Editor initial={play} readOnly shared role={role} />;
 }
