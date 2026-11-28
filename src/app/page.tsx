@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { currentUser } from "@/lib/auth";
 import { store } from "@/lib/store";
@@ -10,7 +11,9 @@ const fmt = new Intl.DateTimeFormat("sv-SE", { dateStyle: "medium", timeStyle: "
 
 export default async function Home() {
   await connection(); // always read fresh from the store
-  const [plays, me] = await Promise.all([store().list(), currentUser()]);
+  const me = await currentUser();
+  if (!me) redirect("/login"); // e.g. a session ended on another device
+  const plays = await store().list();
   const admin = me?.role === "admin";
   return (
     <main className="page">

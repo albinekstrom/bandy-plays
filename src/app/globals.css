@@ -423,6 +423,12 @@ a.btn{display:inline-flex;align-items:center;justify-content:center;text-decorat
 .seg-mini button[disabled]{cursor:default}
 .seg-mini button[disabled]:not([aria-pressed="true"]){opacity:.4}
 select.field{appearance:auto}
+.acc-rows li{flex-wrap:wrap}
+.acc-more{flex-basis:100%}
+.acc-more summary{cursor:pointer;font-size:14px;font-weight:600;color:var(--morkrosa);padding:4px 0}
+.acc-more summary:focus-visible{outline:2px solid var(--rosa);outline-offset:2px}
+.acc-more[open]{display:flex;flex-direction:column;gap:12px;padding-bottom:10px}
+.btn.danger,.btn.danger:hover{background:var(--rod)}
 
 /* ---------- 3D view: camera modes and playback in the footer ---------- */
 .v3d-foot{flex-wrap:wrap;justify-content:center;gap:8px 12px}
