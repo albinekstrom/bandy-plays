@@ -28,7 +28,6 @@ export const SEED_NAME = "daniel";
 /** admin: edits plays and accounts. player: watches, quizzes, changes his own password. */
 export type Role = "admin" | "player";
 export const ROLE_NAMES: Record<Role, string> = { admin: "Admin", player: "Spelare" };
-export const MIN_TEAM_CODE = 4;
 
 interface UserStore {
   count(): Promise<number>;

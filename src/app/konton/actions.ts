@@ -1,7 +1,9 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { loggedIn, isAdmin, currentUser } from "@/lib/auth";
-import { usersReady, hashPassword, checkPassword, NAME_RE, MIN_PASSWORD, MIN_TEAM_CODE, type Role } from "@/lib/users";
+import { usersReady, hashPassword, checkPassword, NAME_RE, MIN_PASSWORD, type Role } from "@/lib/users";
+import { MIN_TEAM_CODE } from "@/lib/teamcode";
+import { gate, LIMITS, TOO_MANY } from "@/lib/ratelimit";
 
 export type Result = { ok: boolean; msg: string } | null;
 
@@ -23,11 +25,15 @@ export async function changePassword(_prev: Result, form: FormData): Promise<Res
   const me = await loggedIn();
   if (!me) return { ok: false, msg: "Du är inte inloggad" };
   const u = await usersReady();
+  const g = await gate([{ key: "pw:name:" + me, limit: LIMITS.name }]);
+  if (g.wait) return { ok: false, msg: TOO_MANY };
   const hash = await u.hash(me);
   if (!hash || !(await checkPassword(String(form.get("old") ?? ""), hash))) {
+    await g.fail();
     await new Promise(r => setTimeout(r, 600));
     return { ok: false, msg: "Nuvarande lösenord stämmer inte" };
   }
+  await g.clear(["pw:name:" + me]);
   const pass = String(form.get("pass") ?? ""), pass2 = String(form.get("pass2") ?? "");
   if (pass.length < MIN_PASSWORD) return { ok: false, msg: `Lösenordet ska vara minst ${MIN_PASSWORD} tecken` };
   if (pass !== pass2) return { ok: false, msg: "Lösenorden är inte lika" };

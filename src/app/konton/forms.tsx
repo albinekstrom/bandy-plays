@@ -1,6 +1,6 @@
 "use client";
 import { useActionState, useState } from "react";
-import { randomTeamCode } from "@/lib/teamcode";
+import { randomTeamCode, MIN_TEAM_CODE } from "@/lib/teamcode";
 import { addUser, changePassword, changeTeamCode } from "./actions";
 
 export function AddUserForm() {
@@ -42,14 +42,14 @@ export function TeamCodeForm({ suggestion }: { suggestion: string }) {
   const saved = res?.ok ? res.code : undefined;
   return (
     <form action={action} className="acc-form" onSubmit={() => setCopied(false)}>
-      <label>Ny lagkod (minst 4 tecken)
+      <label>Ny lagkod (minst {MIN_TEAM_CODE} tecken)
         <span className="code-row">
           <input name="code" className="field code-field" value={code} onChange={e => setCode(e.target.value.toUpperCase())}
-            autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false} minLength={4} maxLength={40} required />
+            autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false} minLength={MIN_TEAM_CODE} maxLength={40} required />
           <button className="btn ghost" type="button" onClick={() => setCode(randomTeamCode())}>Slumpa</button>
         </span>
       </label>
-      <button className="btn" type="submit" disabled={pending || code.trim().length < 4}>Spara lagkoden</button>
+      <button className="btn" type="submit" disabled={pending || code.trim().length < MIN_TEAM_CODE}>Spara lagkoden</button>
       {res && <p className={"msg" + (res.ok ? " ok" : "")} role="status">{res.msg}</p>}
       {saved && (
         <p className="code-saved">
