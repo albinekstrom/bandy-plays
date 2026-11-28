@@ -1,27 +1,27 @@
 /* Pure play logic: creating plays, resolving positions, animating between steps.
    Shared by the editor (client) and the server. */
 import type { Arrow, ArrowKind, Ball, Piece, PlayData, Pos, Pt, Step } from "./types";
-import { US_START, THEM_START } from "./rink";
+import { DEFAULT_SPORT, type Sport } from "./sports";
 import { along, clamp, curvePts, spline, dist, ease, heading, lerp, lerpAngle, measurePath, samplePath, polyLength } from "./geom";
 
 export const uid = () =>
   globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36);
 
-export function newPlayData(): PlayData {
+export function newPlayData(sport: Sport = DEFAULT_SPORT): PlayData {
   const pieces: Piece[] = [];
   const pos: Record<string, Pos> = {};
-  for (const [label, x, y] of US_START) {
+  for (const [label, x, y] of sport.start.us) {
     const id = uid();
     pieces.push({ id, side: "us", label });
     pos[id] = { x, y, dir: 0 };
   }
-  THEM_START.forEach(([x, y]) => {
+  sport.start.them.forEach(([x, y]) => {
     const id = uid();
     pieces.push({ id, side: "them", label: "" });
     pos[id] = { x, y, dir: 180 };
   });
   const mv = pieces[0].id;
-  return { pieces, steps: [{ id: uid(), text: "", pos, ball: { holder: mv, x: pos[mv].x, y: pos[mv].y }, arrows: [] }] };
+  return { sport: sport.id, pieces, steps: [{ id: uid(), text: "", pos, ball: { holder: mv, x: pos[mv].x, y: pos[mv].y }, arrows: [] }] };
 }
 
 export const CARRY = 1.2; // ball sits this far in front of its holder

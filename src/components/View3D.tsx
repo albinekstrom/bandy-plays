@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { Piece, Pos, Pt, Step } from "@/lib/types";
-import { L, W, MIDY, NAMES } from "@/lib/rink";
+import { positionName, type Sport } from "@/lib/sports";
 import { clamp, lerp } from "@/lib/geom";
 import { ballPoint, frameAt, plan as planMove, type Plan } from "@/lib/play";
 import { ENVIRONMENTS, loadEnv, saveEnv, type EnvId } from "./three/environments";
@@ -35,11 +35,11 @@ const CAMS: { id: CamMode; label: string; hint: string }[] = [
 
 /* Where the broadcast cameras stand in each environment, and the box they must stay
    in when you swing them (the hall has walls 13–14 m outside the lines and a low roof). */
-const SPOTS: Record<EnvId, { stand: { z: number; y: number }; goal: { x: number; y: number }; box?: [number, number, number, number, number] }> = {
+const spots = (L: number, W: number): Record<EnvId, { stand: { z: number; y: number }; goal: { x: number; y: number }; box?: [number, number, number, number, number] }> => ({
   hall: { stand: { z: -11.5, y: 7.2 }, goal: { x: -12.5, y: 7.2 }, box: [-13, L + 13, -12, W + 16, 7.6] },
   outdoor: { stand: { z: -18, y: 12 }, goal: { x: -14, y: 8 } },
   arena: { stand: { z: -18, y: 11.5 }, goal: { x: -14, y: 8 } },
-};
+});
 // Ovanifrån: cut away everything higher than this (roofs, walls, stands, trees)
 const TOP_CLIP = [new THREE.Plane(new THREE.Vector3(0, -1, 0), 5)];
 const NO_CLIP: THREE.Plane[] = [];
@@ -106,7 +106,8 @@ function ringSprite(color: string, dashed: boolean) {
   return s;
 }
 
-function buildRink(scene: THREE.Scene) {
+function buildRink(scene: THREE.Scene, sport: Sport) {
+  const L = sport.length, W = sport.width, MIDY = W / 2, goal = sport.goal;
   const flat = (geo: THREE.BufferGeometry, color: number, y: number, x = 0, z = 0) => {
     const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }));
     m.rotation.x = -Math.PI / 2;
@@ -115,32 +116,39 @@ function buildRink(scene: THREE.Scene) {
     return m;
   };
   const lw = 0.12, y = 0.006; // painted lines, just above the hall's ice
-  // outline and centre line
+  // outline
   flat(new THREE.PlaneGeometry(L, lw), C.line, y, L / 2, 0);
   flat(new THREE.PlaneGeometry(L, lw), C.line, y, L / 2, W);
   flat(new THREE.PlaneGeometry(lw, W), C.line, y, 0, MIDY);
   flat(new THREE.PlaneGeometry(lw, W), C.line, y, L, MIDY);
-  flat(new THREE.PlaneGeometry(lw, W), C.line, y, L / 2, MIDY);
-  const ring = (r: number, start: number, len: number, x: number) =>
-    flat(new THREE.RingGeometry(r - lw / 2, r + lw / 2, 96, 1, start, len), C.line, y, x, MIDY);
-  ring(5, 0, Math.PI * 2, L / 2);
-  ring(17, -Math.PI / 2, Math.PI, 0); ring(17, Math.PI / 2, Math.PI, L);
-  ring(5, -Math.PI / 2, Math.PI, 0); ring(5, Math.PI / 2, Math.PI, L);
-  for (const x of [12, L / 2, L - 12]) flat(new THREE.CircleGeometry(0.3, 24), C.line, y, x, MIDY);
-  // goals: 3.5 m wide, 2.1 m high
+  // the sport's markings; the plane's local angle a lies at rink angle -a once laid flat
+  for (const m of sport.markings) {
+    if (m.kind === "line") {
+      const [x1, y1] = m.from, [x2, y2] = m.to;
+      const line = flat(new THREE.PlaneGeometry(Math.hypot(x2 - x1, y2 - y1), lw), C.line, y, (x1 + x2) / 2, (y1 + y2) / 2);
+      line.rotation.z = -Math.atan2(y2 - y1, x2 - x1);
+    } else if (m.kind === "dot") {
+      flat(new THREE.CircleGeometry(m.r, 24), C.line, y, m.at[0], m.at[1]);
+    } else if (!m.flat) {
+      const a = m.from ?? 0, b = m.to ?? Math.PI * 2;
+      flat(new THREE.RingGeometry(m.r - lw / 2, m.r + lw / 2, 96, 1, -b, b - a), C.line, y, m.at[0], m.at[1]);
+    }
+  }
+  // goals
   const post = new THREE.MeshStandardMaterial({ color: 0xd8462b, roughness: 0.5 });
   const net = new THREE.MeshStandardMaterial({ color: 0xe8edf1, transparent: true, opacity: 0.4 });
-  for (const [x, back] of [[0, -1.5], [L, L + 1.5]] as const) {
-    for (const dz of [-1.75, 1.75]) {
-      const p = new THREE.Mesh(new THREE.BoxGeometry(0.08, 2.1, 0.08), post);
-      p.position.set(x, 1.05, MIDY + dz);
+  const gw = goal.width, gh = goal.height;
+  for (const [x, back] of [[0, -goal.net], [L, L + goal.net]] as const) {
+    for (const dz of [-gw / 2, gw / 2]) {
+      const p = new THREE.Mesh(new THREE.BoxGeometry(0.08, gh, 0.08), post);
+      p.position.set(x, gh / 2, MIDY + dz);
       scene.add(p);
     }
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 3.5), post);
-    bar.position.set(x, 2.1, MIDY);
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, gw), post);
+    bar.position.set(x, gh, MIDY);
     scene.add(bar);
-    const n = new THREE.Mesh(new THREE.BoxGeometry(Math.abs(back - x), 2.1, 3.5), net);
-    n.position.set((x + back) / 2, 1.05, MIDY);
+    const n = new THREE.Mesh(new THREE.BoxGeometry(Math.abs(back - x), gh, gw), net);
+    n.position.set((x + back) / 2, gh / 2, MIDY);
     scene.add(n);
   }
 }
@@ -157,7 +165,9 @@ interface Player {
   chest: THREE.Vector3;
 }
 
-export default function View3D({ pieces, step, steps, speed = 1, viewer, k, count, onStep, onViewer, onClose }: {
+export default function View3D({ sport, pieces, step, steps, speed = 1, viewer, k, count, onStep, onViewer, onClose }: {
+  /** The play's sport: surface size, markings, goals and position names. */
+  sport: Sport;
   pieces: Piece[];
   step: Step;
   /** The line of steps being viewed (step === steps[k]); playback needs at least two. */
@@ -184,7 +194,7 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
   const onIce = pieces.filter(p => step.pos[p.id]);
   const ours = onIce.filter(p => p.side === "us");
   const theirs = onIce.filter(p => p.side === "them");
-  const nameOf = (p: Piece, i: number) => (p.label ? NAMES[p.label] ?? p.label : `Motståndare ${i + 1}`);
+  const nameOf = (p: Piece, i: number) => (p.label ? positionName(sport, p.label) : `Motståndare ${i + 1}`);
   const myName = me ? nameOf(me, Math.max(0, theirs.indexOf(me))) : "";
 
   // shared with the render loop, which outlives renders
@@ -205,10 +215,11 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
     renderer.setSize(host.clientWidth, host.clientHeight, false);
     host.appendChild(renderer.domElement);
     const scene = new THREE.Scene();
-    const env = (ENVIRONMENTS.find(e => e.id === envId) ?? ENVIRONMENTS[0]).build(scene, renderer);
+    const L = sport.length, W = sport.width, MIDY = W / 2;
+    const env = (ENVIRONMENTS.find(e => e.id === envId) ?? ENVIRONMENTS[0]).build(scene, renderer, sport);
     const { mirror } = env;
-    const spot = SPOTS[envId] ?? SPOTS.hall;
-    buildRink(scene);
+    const SPOTS = spots(L, W), spot = SPOTS[envId] ?? SPOTS.hall;
+    buildRink(scene, sport);
 
     /* ---------- players and ball: built once, moved every frame ---------- */
     const players: Player[] = pieces.map((pc, i) => {
@@ -529,7 +540,7 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
       renderer.dispose();
       el.remove();
     };
-  }, [pieces, envId]); // not viewer: switching perspective updates the scene in place (below)
+  }, [pieces, envId, sport]); // not viewer: switching perspective updates the scene in place (below)
 
   useEffect(() => {
     if (viewerRef.current !== viewer) sceneRef.current?.setViewer(viewer);

@@ -4,16 +4,15 @@
    round the ice and a full, mostly yellow-and-blue crowd.
    Units are metres; x along the rink, z across it, y up. */
 import * as THREE from "three";
-import { L, W, MIDY } from "@/lib/rink";
 import {
-  addBoardRing, addCornerFlags, addIce, addSarg, addSky, addSnowGround, addTrees, at, Beams, canvasTex, forestBand, merge, paint,
+  addBoardRing, addCornerFlags, addIce, addSarg, addSky, addSnowGround, addTrees, at, Beams, canvasTex, forestBand, merge, paint, type Surface,
   rng, sunDir, v3, type Env,
 } from "./common";
 
 const B = 5;                       // boards this far outside the lines
 const ROW_D = 0.85, ROW_H = 0.45;  // stand row depth and rise
 const FRONT = 9;                   // stands start this far outside the lines
-const SX0 = 4, SX1 = L - 4;        // stands run along x from here to here
+const SX0 = 4, SX_END = 4;         // stands run along x from SX0 to SX_END before the far end
 const MAIN_ROWS = 16, OPEN_ROWS = 14;
 const ROOF_Y = 12.6;
 
@@ -27,8 +26,8 @@ const SKIN = [0xf1c7a5, 0xe8b894, 0xd9a07a, 0xb57a52, 0x8a5636];
 const HATS = [0xffc20e, 0x0057a8, 0xd32f2f, 0xf2f2f2, 0x1d2a3a];
 
 /** One step-shaped stand as a single mesh: concrete rows with a seat strip on each. */
-function standGeo(rows: number, front: number, dir: 1 | -1, seat: number) {
-  const len = SX1 - SX0, parts: THREE.BufferGeometry[] = [];
+function standGeo(L: number, rows: number, front: number, dir: 1 | -1, seat: number) {
+  const SX1 = L - SX_END, len = SX1 - SX0, parts: THREE.BufferGeometry[] = [];
   for (let r = 0; r < rows; r++) {
     const top = 1.4 + r * ROW_H, z = front + dir * (r + 0.5) * ROW_D;
     parts.push(paint(new THREE.BoxGeometry(len, top, ROW_D), r % 2 ? 0xa7acb1 : 0x9ea3a8, at(L / 2, top / 2, z)));
@@ -52,19 +51,20 @@ function standGeo(rows: number, front: number, dir: 1 | -1, seat: number) {
   return { geo: merge(parts), back };
 }
 
-export function buildArena(scene: THREE.Scene, renderer: THREE.WebGLRenderer): Env {
+export function buildArena(scene: THREE.Scene, renderer: THREE.WebGLRenderer, surf: Surface): Env {
+  const L = surf.length, W = surf.width, MIDY = W / 2, SX1 = L - SX_END;
   const sun = sunDir(72, 19);
-  const disposeSky = addSky(scene, sun);
+  const disposeSky = addSky(scene, sun, surf);
   scene.fog = new THREE.Fog(0xdce8f2, 160, 600);
 
   /* ---------- ice, sarg, flags, boards ---------- */
   const mirror = addIce(scene, renderer, -B, L + B, -B, W + B, { mirrorColor: 0x8f9daa, iceColor: 0xe9f0f5, opacity: 0.76, roughness: 0.14 });
-  addSarg(scene);
-  addCornerFlags(scene);
+  if (surf.surface.sarg) addSarg(scene, surf);
+  if (surf.surface.cornerFlags) addCornerFlags(scene, surf);
   const frame = new THREE.MeshStandardMaterial({ color: 0xeef1f3, roughness: 0.5 });
   addBoardRing(scene, -B, L + B, -B, W + B, { height: 0.9, texts: ARENA_TEXTS, frame, rail: false, panel: 5 });
 
-  addSnowGround(scene);
+  addSnowGround(scene, surf);
   const apron = new THREE.Mesh(new THREE.PlaneGeometry(L + 2 * B + 30, W + 2 * FRONT + 6), new THREE.MeshLambertMaterial({ color: 0x8f969c }));
   apron.rotation.x = -Math.PI / 2;
   apron.position.set(L / 2, -0.03, MIDY);
@@ -72,8 +72,8 @@ export function buildArena(scene: THREE.Scene, renderer: THREE.WebGLRenderer): E
 
   /* ---------- stands ---------- */
   const standMat = new THREE.MeshLambertMaterial({ vertexColors: true });
-  const main = standGeo(MAIN_ROWS, -FRONT, -1, 0x0057a8);
-  const open = standGeo(OPEN_ROWS, W + FRONT, 1, 0xffc20e);
+  const main = standGeo(L, MAIN_ROWS, -FRONT, -1, 0x0057a8);
+  const open = standGeo(L, OPEN_ROWS, W + FRONT, 1, 0xffc20e);
   scene.add(new THREE.Mesh(main.geo, standMat), new THREE.Mesh(open.geo, standMat));
 
   // main stand: back wall, cantilevered roof with a fascia, masts and stays

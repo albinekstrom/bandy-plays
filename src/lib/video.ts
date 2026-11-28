@@ -2,7 +2,7 @@
    with the 2D API (same look as the editor's SVG) and recorded in real time
    with MediaRecorder. Browser only. */
 import type { Arrow, Piece, Pos, Pt, Step } from "./types";
-import { L, W, MIDY, ZONE, zoneLabel } from "./rink";
+import { DEFAULT_SPORT, type Sport } from "./sports";
 import { arrowCurve, arrowKind, frameAt, plan, stillFrame, type Frame, type Plan } from "./play";
 import { clamp } from "./geom";
 
@@ -10,7 +10,9 @@ export interface VideoOpts {
   name: string;
   pieces: Piece[];
   steps: Step[];
-  /** Half width of the substitution zone (metres). */
+  /** The play's sport (surface and markings); bandy when not given. */
+  sport?: Sport;
+  /** Half width of the substitution zone (metres), for sports that have one. */
   zone?: number;
   format?: "16:9" | "9:16";
   speed?: number;
@@ -158,7 +160,8 @@ interface Scene {
   name: string;
   pieces: Piece[];
   steps: Step[];
-  zone: number;
+  sport: Sport;
+  zone: number | null;
   showText: boolean;
   showThem: boolean;
   side: Record<string, Piece["side"]>;
@@ -166,9 +169,12 @@ interface Scene {
   world: DOMMatrix;
 }
 
-function makeScene(ctx: CanvasRenderingContext2D, lay: Layout, f: Fonts, o: Required<Pick<VideoOpts, "name" | "pieces" | "steps" | "zone" | "showText" | "showThem">>): Scene {
+type SceneOpts = Required<Pick<VideoOpts, "name" | "pieces" | "steps" | "sport" | "showText" | "showThem">> & { zone: number | null };
+
+function makeScene(ctx: CanvasRenderingContext2D, lay: Layout, f: Fonts, o: SceneOpts): Scene {
   // the editor's viewBox, standing (attack upwards) in portrait
-  const vb = lay.portrait ? { x: -3, y: -4, w: 71, h: 113 } : { x: -4, y: -3, w: 113, h: 71 };
+  const L = o.sport.length, W = o.sport.width;
+  const vb = lay.portrait ? { x: -3, y: -4, w: W + 6, h: L + 8 } : { x: -4, y: -3, w: L + 8, h: W + 6 };
   const r = lay.rink;
   const s = Math.min(r.w / vb.w, r.h / vb.h);
   const ox = r.x + (r.w - vb.w * s) / 2 - vb.x * s;
@@ -198,7 +204,8 @@ function rinkText(sc: Scene, x: number, y: number, text: string, sizeM: number, 
 }
 
 function drawRink(sc: Scene) {
-  const { ctx } = sc;
+  const { ctx, sport } = sc;
+  const L = sport.length, W = sport.width, MIDY = W / 2, g = sport.goal;
   toWorld(sc);
   ctx.lineCap = "butt";
   ctx.lineJoin = "miter";
@@ -207,40 +214,41 @@ function drawRink(sc: Scene) {
   ctx.fillStyle = C.frost;
   ctx.strokeStyle = C.natt;
   ctx.lineWidth = 0.25;
-  for (const x of [-2, L]) { ctx.fillRect(x, MIDY - 1.75, 2, 3.5); ctx.strokeRect(x, MIDY - 1.75, 2, 3.5); }
+  for (const x of [-g.depth, L]) {
+    ctx.fillRect(x, MIDY - g.width / 2, g.depth, g.width); ctx.strokeRect(x, MIDY - g.width / 2, g.depth, g.width);
+  }
   // ice
   ctx.fillStyle = C.ice;
   ctx.fillRect(0, 0, L, W);
   // växlingszon
-  ctx.globalAlpha = 0.55;
-  ctx.fillStyle = C.frost;
   const z = sc.zone;
-  ctx.fillRect(0, MIDY - z, L, z * 2);
-  ctx.globalAlpha = 1;
-  ctx.strokeStyle = C.isgra;
-  ctx.lineWidth = 0.25;
-  line(ctx, 0, MIDY, L, MIDY);
-  ctx.lineWidth = 0.2;
-  ctx.setLineDash([1, 1]);
-  line(ctx, 0, MIDY - z, L, MIDY - z);
-  line(ctx, 0, MIDY + z, L, MIDY + z);
-  ctx.setLineDash([]);
-  rinkText(sc, 1.5, MIDY - z - 0.6, zoneLabel(z), 1.4, "700", C.skiffer, "left", "alphabetic");
-  toWorld(sc);
+  if (z !== null && sport.zone) {
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = C.frost;
+    ctx.fillRect(0, MIDY - z, L, z * 2);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = C.isgra;
+    ctx.lineWidth = 0.25;
+    line(ctx, 0, MIDY, L, MIDY);
+    ctx.lineWidth = 0.2;
+    ctx.setLineDash([1, 1]);
+    line(ctx, 0, MIDY - z, L, MIDY - z);
+    line(ctx, 0, MIDY + z, L, MIDY + z);
+    ctx.setLineDash([]);
+    rinkText(sc, 1.5, MIDY - z - 0.6, sport.zone.label(z), 1.4, "700", C.skiffer, "left", "alphabetic");
+    toWorld(sc);
+  }
   // red markings
   ctx.strokeStyle = C.rod;
   ctx.fillStyle = C.rod;
   ctx.lineWidth = 0.25;
   ctx.strokeRect(0, 0, L, W);
-  line(ctx, L / 2, 0, L / 2, W);
-  const arc = (x: number, y: number, r: number, a: number, b: number) => {
-    ctx.beginPath(); ctx.arc(x, y, r, a, b); ctx.stroke();
-  };
-  const P = Math.PI;
-  arc(L / 2, MIDY, 5, 0, 2 * P);
-  for (const r of [17, 5]) { arc(0, MIDY, r, -P / 2, P / 2); arc(L, MIDY, r, P / 2, 1.5 * P); }
-  arc(0, 0, 1, 0, P / 2); arc(L, 0, 1, P / 2, P); arc(0, W, 1, -P / 2, 0); arc(L, W, 1, P, 1.5 * P);
-  for (const x of [12, L / 2, L - 12]) { ctx.beginPath(); ctx.arc(x, MIDY, 0.3, 0, 2 * P); ctx.fill(); }
+  for (const m of sport.markings) {
+    ctx.beginPath();
+    if (m.kind === "line") { ctx.moveTo(...m.from); ctx.lineTo(...m.to); ctx.stroke(); }
+    else if (m.kind === "dot") { ctx.arc(m.at[0], m.at[1], m.r, 0, 2 * Math.PI); ctx.fill(); }
+    else { ctx.arc(m.at[0], m.at[1], m.r, m.from ?? 0, m.to ?? 2 * Math.PI); ctx.stroke(); }
+  }
 }
 
 function line(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number) {
@@ -539,8 +547,10 @@ export async function exportVideo(opts: VideoOpts): Promise<VideoResult> {
   if (signal?.aborted) throw abortError();
 
   const speed = opts.speed && opts.speed > 0 ? opts.speed : 1;
+  const sport = opts.sport ?? DEFAULT_SPORT;
   const sc = makeScene(ctx, lay, f, {
-    name: opts.name, pieces: opts.pieces, steps: opts.steps, zone: opts.zone ?? ZONE,
+    name: opts.name, pieces: opts.pieces, steps: opts.steps, sport,
+    zone: sport.zone ? opts.zone ?? sport.zone.default : null,
     showText: opts.showText ?? true, showThem: opts.showThem ?? true,
   });
   const { segs, total } = timeline(opts.steps, speed);

@@ -3,9 +3,8 @@
    falu-red cottages, a wooden kiosk and scoreboard, wooden light poles.
    Units are metres; x along the rink, z across it, y up. */
 import * as THREE from "three";
-import { L, W, MIDY } from "@/lib/rink";
 import {
-  addCornerFlags, addIce, addSarg, addSky, addSnowGround, addTrees, at, Beams, canvasTex, forestBand, merge, paint, rng,
+  addCornerFlags, addIce, addSarg, addSky, addSnowGround, addTrees, at, Beams, canvasTex, forestBand, merge, paint, rng, type Surface,
   sunDir, v3, type Env,
 } from "./common";
 
@@ -116,18 +115,19 @@ export function cottageGeo() {
   return merge(parts);
 }
 
-export function buildOutdoor(scene: THREE.Scene, renderer: THREE.WebGLRenderer): Env {
+export function buildOutdoor(scene: THREE.Scene, renderer: THREE.WebGLRenderer, surf: Surface): Env {
+  const L = surf.length, W = surf.width, MIDY = W / 2;
   const sun = sunDir(62, 15);
-  const disposeSky = addSky(scene, sun);
+  const disposeSky = addSky(scene, sun, surf);
   scene.fog = new THREE.Fog(0xdce8f2, 140, 560);
 
   /* ---------- natural ice with sun glare, snow around ---------- */
   const mirror = addIce(scene, renderer, -ICE, L + ICE, -ICE, W + ICE, {
     mirrorColor: 0x93a3b3, iceColor: 0xdfe8ef, opacity: 0.72, roughness: 0.12,
   });
-  addSnowGround(scene);
-  addSarg(scene);
-  addCornerFlags(scene);
+  addSnowGround(scene, surf);
+  if (surf.surface.sarg) addSarg(scene, surf);
+  if (surf.surface.cornerFlags) addCornerFlags(scene, surf);
 
   const snowMat = new THREE.MeshLambertMaterial({ color: 0xf4f8fb });
   const inner = roundedRect(-ICE - 1.7, L + ICE + 1.7, -ICE - 1.7, W + ICE + 1.7, 7, 1.5);

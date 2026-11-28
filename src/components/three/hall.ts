@@ -3,13 +3,9 @@
    long side, corner flags, and shiny ice. Units are metres; x along the rink,
    z across it (the 2D y), y up. Built from code: no photos or downloaded models. */
 import * as THREE from "three";
-import { L, W, MIDY } from "@/lib/rink";
-import { addBoardRing, addCornerFlags, addIce, addSarg, Beams, canvasTex, type Env } from "./common";
+import { addBoardRing, addCornerFlags, addIce, addSarg, Beams, canvasTex, type Env, type Surface } from "./common";
 
-const X0 = -14, X1 = L + 14;          // hall ends
-const Z0 = -13, Z1 = W + 17;          // hall sides (stands on the far side)
 const WALL = 8, PEAK = 17;            // eaves and ridge height
-export const roofAt = (z: number) => WALL + (PEAK - WALL) * Math.sin((Math.PI * (z - Z0)) / (Z1 - Z0));
 
 /** Corrugated sheet metal: soft vertical ridges. */
 const corrugated = (repeat: [number, number], base = 150) => canvasTex(64, 8, g => {
@@ -20,7 +16,11 @@ const corrugated = (repeat: [number, number], base = 150) => canvasTex(64, 8, g 
   }
 }, repeat);
 
-export function buildHall(scene: THREE.Scene, renderer: THREE.WebGLRenderer): Env {
+export function buildHall(scene: THREE.Scene, renderer: THREE.WebGLRenderer, surf: Surface): Env {
+  const L = surf.length, W = surf.width, MIDY = W / 2;
+  const X0 = -14, X1 = L + 14;          // hall ends
+  const Z0 = -13, Z1 = W + 17;          // hall sides (stands on the far side)
+  const roofAt = (z: number) => WALL + (PEAK - WALL) * Math.sin((Math.PI * (z - Z0)) / (Z1 - Z0));
   const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
   const steel = new THREE.MeshStandardMaterial({ color: 0xb7bec6, metalness: 0.6, roughness: 0.45 });
   const wood = new THREE.MeshStandardMaterial({ color: 0xd9b77e, roughness: 0.7 });
@@ -112,8 +112,8 @@ export function buildHall(scene: THREE.Scene, renderer: THREE.WebGLRenderer): En
     scene.add(step);
   }
 
-  addSarg(scene);
-  addCornerFlags(scene);
+  if (surf.surface.sarg) addSarg(scene, surf);
+  if (surf.surface.cornerFlags) addCornerFlags(scene, surf);
 
   /* ---------- light: bright, even hall light from above ---------- */
   scene.background = new THREE.Color(0x8d969f);

@@ -2,13 +2,14 @@
    ball by simple rules (the same idea as the Uppspel page). Ours shift with
    the ball; theirs close in on it, the nearest one presses, the keepers stay. */
 import type { Piece, Pos, Step } from "./types";
-import { L, W, MIDY, US_START } from "./rink";
+import { DEFAULT_SPORT, type Sport } from "./sports";
 import { ballPoint } from "./play";
 import { clamp } from "./geom";
 
 const facing = (p: { x: number; y: number }, b: [number, number]) => Math.round((Math.atan2(b[1] - p.y, b[0] - p.x) * 180) / Math.PI);
 
-export function autoPlace(steps: Step[], pieces: Piece[], opts: { us: boolean; them: boolean }): Step[] {
+export function autoPlace(steps: Step[], pieces: Piece[], opts: { us: boolean; them: boolean }, sport: Sport = DEFAULT_SPORT): Step[] {
+  const L = sport.length, W = sport.width, MIDY = W / 2;
   const out = steps.map(s => ({ ...s, pos: { ...s.pos } }));
   // keepers: the player of each side closest to his own goal at the start
   const keeper = (side: "us" | "them") => {
@@ -34,7 +35,7 @@ export function autoPlace(steps: Step[], pieces: Piece[], opts: { us: boolean; t
     const q = steps[0].pos[p.id];
     if (!q) continue;
     if (p.side === "us") {
-      const f = US_START.find(([lbl]) => lbl === p.label);
+      const f = sport.start.us.find(([lbl]) => lbl === p.label);
       home[p.id] = f ? { x: f[1], y: f[2] } : { x: q.x - (b0[0] - 30) * 0.45, y: q.y - (b0[1] - MIDY) * 0.2 };
     } else {
       home[p.id] = { x: (q.x - 0.3 * b0[0]) / 0.7, y: (q.y - 0.3 * b0[1]) / 0.7 };
@@ -65,7 +66,7 @@ export function autoPlace(steps: Step[], pieces: Piece[], opts: { us: boolean; t
         next = { x: gx, y: clamp(MIDY + (b1[1] - MIDY) * 0.06, MIDY - 1.6, MIDY + 1.6), dir: 0 };
       } else if (p.side === "us" && !scriptedEver.has(p.id)) {
         const h = home[p.id];
-        next = { x: clamp(h.x + (b1[0] - 30) * 0.45, 2, 100), y: clamp(h.y + (b1[1] - MIDY) * 0.2, 2, W - 2), dir: 0 };
+        next = { x: clamp(h.x + (b1[0] - 30) * 0.45, 2, L - 5), y: clamp(h.y + (b1[1] - MIDY) * 0.2, 2, W - 2), dir: 0 };
       } else if (p.side === "us") {
         next = { x: clamp(q.x + dx * 0.45, 2, L - 2), y: clamp(q.y + dy * 0.2, 2, W - 2), dir: 0 };
       } else if (p.id === presser) {
