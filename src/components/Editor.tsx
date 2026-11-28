@@ -10,7 +10,7 @@ import { dataOf } from "@/lib/schema";
 import dynamic from "next/dynamic";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Arrow, ArrowKind, Play, PlayData, Pt, Step } from "@/lib/types";
-import { L, W, MIDY, NAMES, ZONE_MIN, ZONE_MAX, zoneOf } from "@/lib/rink";
+import { positionName, sportById, sportOf, zoneOf } from "@/lib/sports";
 import { clamp, dist, fitStroke, heading, pathD, spline } from "@/lib/geom";
 import {
   arrowCurve, arrowKind, ballPoint, endState, holderRun, lobArc, passOrigin, runHandles, frameAt, movePiece, nearestPiece, placeFromStart, plan, runEndDir, skatedBefore, stepAfter, stillFrame, uid, type Frame, type Plan,
@@ -108,6 +108,11 @@ export default function Editor({ initial, readOnly = false, shared = false, role
   const next = steps[kk + 1] as Step | undefined;
   const pieceById = useMemo(() => Object.fromEntries(data.pieces.map(p => [p.id, p])), [data.pieces]);
   const visible = useMemo(() => data.pieces.filter(p => showThem || p.side === "us"), [data.pieces, showThem]);
+  // the play's sport: surface size, markings, position names (plays without one are bandy)
+  const sport = sportOf(data);
+  const L = sport.length, W = sport.width, MIDY = W / 2;
+  const zone = zoneOf(data, sport);
+  const posName = (code: string) => positionName(sport, code);
   const variants = data.variants ?? [];
   const own = ownFrom(data, line);
   const roleId = role ? data.pieces.find(p => p.side === "us" && p.label === role)?.id ?? null : null;
@@ -117,7 +122,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
   };
   const nameOf = (id: string | null | undefined) => {
     const p = id ? pieceById[id] : undefined;
-    return p ? (p.label ? NAMES[p.label] ?? p.label : "Motståndaren") : "Bollhållaren";
+    return p ? (p.label ? posName(p.label) : "Motståndaren") : "Bollhållaren";
   };
 
   /* ---------- history ---------- */
@@ -399,7 +404,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
   // who gets there first: a soft blue (ours) / grey (theirs) map, drawn once per still step
   const spaceImg = useMemo(() => {
     if (!space || mode !== "play" || anim || typeof document === "undefined") return null;
-    const { cols, rows, grid } = spaceControl(data.pieces, step.pos);
+    const { cols, rows, grid } = spaceControl(data.pieces, step.pos, sportById(data.sport));
     const c = document.createElement("canvas");
     c.width = cols; c.height = rows;
     const g = c.getContext("2d");
@@ -417,7 +422,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     }
     g.putImageData(img, 0, 0);
     return { href: c.toDataURL(), w: cols * CELL, h: rows * CELL, ourShare: Math.round(100 * ours / grid.length) };
-  }, [space, mode, anim, data.pieces, step.pos]);
+  }, [space, mode, anim, data.pieces, step.pos, data.sport]);
   const ourShare = spaceImg?.ourShare ?? 0;
 
   /* ---------- pointer → rink coordinates ---------- */
@@ -640,7 +645,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     setShowThem(true);
   };
   const runAuto = () => {
-    commitLine((s, d) => autoPlace(s, d.pieces, autoOpts));
+    commitLine((s, d) => autoPlace(s, d.pieces, autoOpts, sportOf(d)));
     setMore(false);
   };
   const setNote = (id: string, text: string) =>
@@ -757,7 +762,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     const state: ScreenState = {
       name, k: screenStep, n: steps.length, text: shownStep.text, playing,
       line: variants.length ? lineName(data, line) : "",
-      choice: choice ? choice.options.map(o => ({ id: o.line ?? "main", label: o.badge ? (NAMES[o.badge] ?? o.badge) : o.name, badge: o.badge })) : null,
+      choice: choice ? choice.options.map(o => ({ id: o.line ?? "main", label: o.badge ? positionName(sportOf(data), o.badge) : o.name, badge: o.badge })) : null,
     };
     const t = setTimeout(() => {
       fetch(`/api/fjarr/${remoteCode}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state }) }).catch(() => {});
@@ -807,7 +812,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
       <header className="top">
         <div className="title">
           {present ? <Link className="back" href={`/spel/${initial.id}`} onClick={leave}>← Avsluta presentation</Link>
-            : shared ? <span className="kicker">{roleId ? `Din roll: ${NAMES[role!] ?? role}` : "Delat spel"}</span>
+            : shared ? <span className="kicker">{roleId ? `Din roll: ${posName(role!)}` : "Delat spel"}</span>
             : <Link className="back" href="/" onClick={leave}>← Mina spel</Link>}
           <input className="name" value={name} onChange={e => setName(e.target.value)} aria-label="Spelets namn" maxLength={80} readOnly={readOnly || mode === "play"} />
         </div>
@@ -863,7 +868,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
         <svg
           ref={svgRef}
           id="field"
-          viewBox={portrait ? "-3 -4 71 113" : "-4 -3 113 71"}
+          viewBox={portrait ? `-3 -4 ${W + 6} ${L + 8}` : `-4 -3 ${L + 8} ${W + 6}`}
           onPointerDown={onDown}
           onPointerMove={onMove}
           onPointerUp={onUp}
@@ -880,7 +885,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
             ))}
           </defs>
           <g ref={worldRef} transform={portrait ? `matrix(0 -1 1 0 0 ${L})` : undefined}>
-            <Rink portrait={portrait} zone={zoneOf(data)} />
+            <Rink portrait={portrait} sport={sport} zone={zone} />
 
             {mode === "play" && !quiz && viewer && frame.pos[viewer] && (() => {
               // what he sees: clear in front (±55°), out of the corner of the eye (±100°)
@@ -1008,7 +1013,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
             aria-label="Beskrivning av steget"
           />}
           {mode === "play" && !quiz && viewer && pieceById[viewer]?.side === "us" && (() => {
-            const t = taskFor(viewer, shownStep, shownNext, data.pieces);
+            const t = taskFor(viewer, shownStep, shownNext, data.pieces, sport);
             return (
               <p className={"task" + (roleId === viewer ? " mine" : "")}>
                 <b>{roleId === viewer ? "Din uppgift" : `Uppgift för ${labelOf(viewer)}`}:</b> {t.text}
@@ -1020,7 +1025,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
               <span>Uppgift för {labelOf(sel)}:</span>
               <input
                 value={step.notes?.[sel] ?? ""}
-                placeholder={taskFor(sel, { ...step, notes: {} }, next, data.pieces).text}
+                placeholder={taskFor(sel, { ...step, notes: {} }, next, data.pieces, sport).text}
                 onFocus={snapshot}
                 onChange={e => setNote(sel, e.target.value)}
                 disabled={playing}
@@ -1033,7 +1038,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
               <button className="tg" type="button" onClick={removeStep} disabled={playing || steps.length < 2 || kk !== steps.length - 1 || (line !== null && kk <= own)} title="Bara det sista steget kan tas bort, eftersom varje steg bygger på det före.">Ta bort sista steget</button>
             </div>
           )}
-          {holder && !hideArrows && <span className="holder">Bollen: {holder.label ? NAMES[holder.label] ?? holder.label : "motståndare"}</span>}
+          {holder && !hideArrows && <span className="holder">Bollen: {holder.label ? posName(holder.label) : "motståndare"}</span>}
         </section>
 
         {mode === "play" && (
@@ -1076,13 +1081,13 @@ export default function Editor({ initial, readOnly = false, shared = false, role
                   <span className="more-note">Helskärm för tv/projektor, styrs med tangentbord, klickare eller mobilen.</span>
                 </div>
               )}
-              {mode === "edit" && (
+              {mode === "edit" && sport.zone && zone !== null && (
                 <div className="more-row">
                   <span className="more-lbl">Växlingszon</span>
-                  <input type="range" min={ZONE_MIN} max={ZONE_MAX} step={0.5} value={zoneOf(data)} disabled={playing}
+                  <input type="range" min={sport.zone.min} max={sport.zone.max} step={0.5} value={zone} disabled={playing}
                     onPointerDown={snapshot} onKeyDown={snapshot} onChange={e => setData(d => ({ ...d, zone: Number(e.target.value) }))}
                     aria-label="Växlingszonens bredd från mittlinjen" />
-                  <span className="more-note">±{String(zoneOf(data)).replace(".", ",")} m från mittlinjen</span>
+                  <span className="more-note">±{String(zone).replace(".", ",")} m från mittlinjen</span>
                 </div>
               )}
               <div className="more-row">
@@ -1131,7 +1136,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
               {choice.options.map(o => (
                 <button key={o.line ?? "main"} type="button" onClick={() => choice.pick(o.line)} autoFocus={o === choice.options[0]}>
                   {o.badge && <span className="badge">{o.badge}</span>}
-                  {o.badge ? (NAMES[o.badge] ?? o.badge) : o.name}
+                  {o.badge ? posName(o.badge) : o.name}
                   {o.badge && <span className="pop-line">{o.name}</span>}
                 </button>
               ))}
@@ -1140,10 +1145,11 @@ export default function Editor({ initial, readOnly = false, shared = false, role
         </div>
       )}
 
-      {video && <VideoExport name={name} pieces={data.pieces} steps={steps} zone={zoneOf(data)} showThem={showThem} onClose={() => setVideo(false)} />}
+      {video && <VideoExport name={name} pieces={data.pieces} steps={steps} sport={sport} zone={zone ?? undefined} showThem={showThem} onClose={() => setVideo(false)} />}
 
       {show3d && viewer && pieceById[viewer] && (
         <View3D
+          sport={sport}
           pieces={data.pieces}
           step={step}
           viewer={viewer}

@@ -1,31 +1,27 @@
 import { memo } from "react";
-import { L, W, MIDY, ZONE, zoneLabel } from "@/lib/rink";
+import { arcPath, isCircle, type Sport } from "@/lib/sports";
 
-/* Rink markings, in metres. Same drawing as the Uppspel page. */
-export default memo(function Rink({ portrait, zone = ZONE }: { portrait: boolean; zone?: number }) {
-  const arcs = [
-    `M0 ${MIDY - 17} A17 17 0 0 1 0 ${MIDY + 17}`,
-    `M${L} ${MIDY - 17} A17 17 0 0 0 ${L} ${MIDY + 17}`,
-    `M0 ${MIDY - 5} A5 5 0 0 1 0 ${MIDY + 5}`,
-    `M${L} ${MIDY - 5} A5 5 0 0 0 ${L} ${MIDY + 5}`,
-    "M1 0 A1 1 0 0 1 0 1", `M${L - 1} 0 A1 1 0 0 0 ${L} 1`,
-    `M0 ${W - 1} A1 1 0 0 1 1 ${W}`, `M${L} ${W - 1} A1 1 0 0 0 ${L - 1} ${W}`,
-  ];
-  const zx = 1.5, zy = MIDY - zone - 0.6;
+/* The sport's markings, in metres. Same drawing as the Uppspel page. `zone` is the
+   substitution zone's half width, for sports that have one. */
+export default memo(function Rink({ portrait, sport, zone }: { portrait: boolean; sport: Sport; zone: number | null }) {
+  const L = sport.length, W = sport.width, MIDY = W / 2, g = sport.goal;
+  const zx = 1.5, zy = zone === null ? 0 : MIDY - zone - 0.6;
   return (
     <g>
-      <rect className="mk-goal" x={-2} y={MIDY - 1.75} width={2} height={3.5} />
-      <rect className="mk-goal" x={L} y={MIDY - 1.75} width={2} height={3.5} />
+      <rect className="mk-goal" x={-g.depth} y={MIDY - g.width / 2} width={g.depth} height={g.width} />
+      <rect className="mk-goal" x={L} y={MIDY - g.width / 2} width={g.depth} height={g.width} />
       <rect className="mk mk-ice" x={0} y={0} width={L} height={W} />
-      <rect className="zone" x={0} y={MIDY - zone} width={L} height={zone * 2} />
-      <line className="lane-mid" x1={0} y1={MIDY} x2={L} y2={MIDY} />
-      {[MIDY - zone, MIDY + zone].map(y => <line key={y} className="lane" x1={0} y1={y} x2={L} y2={y} />)}
-      <text className="zone-t" x={zx} y={zy} transform={portrait ? `rotate(90 ${zx} ${zy})` : undefined}>{zoneLabel(zone)}</text>
-      <line className="mk" x1={L / 2} y1={0} x2={L / 2} y2={W} />
-      <circle className="mk" cx={L / 2} cy={MIDY} r={5} />
-      <circle className="mk-fill" cx={L / 2} cy={MIDY} r={0.3} />
-      {arcs.map(d => <path key={d} className="mk" d={d} />)}
-      {[12, L - 12].map(x => <circle key={x} className="mk-fill" cx={x} cy={MIDY} r={0.3} />)}
+      {zone !== null && sport.zone && <>
+        <rect className="zone" x={0} y={MIDY - zone} width={L} height={zone * 2} />
+        <line className="lane-mid" x1={0} y1={MIDY} x2={L} y2={MIDY} />
+        {[MIDY - zone, MIDY + zone].map(y => <line key={y} className="lane" x1={0} y1={y} x2={L} y2={y} />)}
+        <text className="zone-t" x={zx} y={zy} transform={portrait ? `rotate(90 ${zx} ${zy})` : undefined}>{sport.zone.label(zone)}</text>
+      </>}
+      {sport.markings.map((m, i) =>
+        m.kind === "line" ? <line key={i} className="mk" x1={m.from[0]} y1={m.from[1]} x2={m.to[0]} y2={m.to[1]} />
+          : m.kind === "dot" ? <circle key={i} className="mk-fill" cx={m.at[0]} cy={m.at[1]} r={m.r} />
+            : isCircle(m) ? <circle key={i} className="mk" cx={m.at[0]} cy={m.at[1]} r={m.r} />
+              : <path key={i} className="mk" d={arcPath(m)} />)}
     </g>
   );
 });

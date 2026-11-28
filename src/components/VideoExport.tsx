@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Piece, Step } from "@/lib/types";
 import { exportVideo, videoDuration, type VideoResult } from "@/lib/video";
+import type { Sport } from "@/lib/sports";
 
 type Format = "16:9" | "9:16";
 const SPEEDS = [0.5, 1, 1.5, 2];
@@ -11,6 +12,7 @@ interface Props {
   name: string;
   pieces: Piece[];
   steps: Step[];
+  sport: Sport;
   zone?: number;
   onClose: () => void;
   showThem?: boolean;
@@ -26,7 +28,7 @@ const fileName = (name: string, ext: string) =>
   (name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "").trim().slice(0, 80) || "bandyspel") + "." + ext;
 
 /** Dialog: record the play's playback as a video, then download or share it. */
-export default function VideoExport({ name, pieces, steps, zone, onClose, showThem: themDefault = true }: Props) {
+export default function VideoExport({ name, pieces, steps, sport, zone, onClose, showThem: themDefault = true }: Props) {
   const [state, setState] = useState<State>({ phase: "idle" });
   const [format, setFormat] = useState<Format>("16:9");
   const [speed, setSpeed] = useState(1);
@@ -61,7 +63,7 @@ export default function VideoExport({ name, pieces, steps, zone, onClose, showTh
     setState({ phase: "recording", progress: 0 });
     try {
       const { blob, ext } = await exportVideo({
-        name, pieces, steps, zone, format, speed, showText, showThem, canvas, signal: ac.signal,
+        name, pieces, steps, sport, zone, format, speed, showText, showThem, canvas, signal: ac.signal,
         onProgress: progress => setState(s => (s.phase === "recording" ? { phase: "recording", progress } : s)),
       });
       if (ac.signal.aborted) return;

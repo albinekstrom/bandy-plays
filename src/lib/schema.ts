@@ -8,9 +8,9 @@
    - migrations are pure and additive: add fields or fill defaults, never delete data;
    - data stored in the database is only rewritten when someone saves the play. */
 import type { PlayData } from "./types";
-import { ZONE_MIN, ZONE_MAX } from "./rink";
+import { bandy } from "./sports/bandy";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 type Data = PlayData & Record<string, unknown> & { v?: number };
 
@@ -20,6 +20,9 @@ const MIGRATIONS: Record<number, (d: Data) => Data> = {
   // 1 → 2: optional `zone` (half width of the växlingszon). Plays without it use the
   // default (rink.ts), so nothing is filled in here.
   1: d => d,
+  // 2 → 3: optional `sport` (an id in src/lib/sports). Plays without it are bandy
+  // (sportOf), so nothing is filled in here and nothing is rewritten.
+  2: d => d,
 };
 
 /** The play's data in the current format. Plays from a newer version are left as they are. */
@@ -83,6 +86,10 @@ export function parsePlayData(v: unknown): (PlayData & O) | null {
   const variantOk = (x: unknown) => isObj(x) && isId(x.id) && isStr(x.name, 100) &&
     Number.isInteger(x.from) && (x.from as number) >= 0 && (x.from as number) < n && list(x.steps, 200, isStep, 1);
   if (!opt(v.variants, x => list(x, 20, variantOk))) return null;
-  if (!opt(v.zone, z => isNum(z) && (z as number) >= ZONE_MIN && (z as number) <= ZONE_MAX)) return null;
+  // the substitution zone is bandy's (the only sport with one so far)
+  const zone = bandy.zone!;
+  if (!opt(v.zone, z => isNum(z) && (z as number) >= zone.min && (z as number) <= zone.max)) return null;
+  // any id is accepted, so a play a newer version made for a sport this one doesn't know still saves
+  if (!opt(v.sport, isId)) return null;
   return withDefaults(v) as PlayData & O;
 }

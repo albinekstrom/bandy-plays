@@ -1,13 +1,13 @@
 /* The selectable surroundings for the 3D view, and the per-device choice. */
 import type * as THREE from "three";
-import type { Env } from "./common";
+import type { Env, Surface } from "./common";
 import { buildHall } from "./hall";
 import { buildOutdoor } from "./outdoor";
 import { buildArena } from "./arena";
 
 export type EnvId = "hall" | "outdoor" | "arena";
 
-export const ENVIRONMENTS: { id: EnvId; label: string; name: string; build: (scene: THREE.Scene, renderer: THREE.WebGLRenderer) => Env }[] = [
+export const ENVIRONMENTS: { id: EnvId; label: string; name: string; build: (scene: THREE.Scene, renderer: THREE.WebGLRenderer, surface: Surface) => Env }[] = [
   { id: "hall", label: "Hall", name: "Inomhushall", build: buildHall },
   { id: "outdoor", label: "Utomhus", name: "Utomhusplan", build: buildOutdoor },
   { id: "arena", label: "Arena", name: "Arena", build: buildArena },

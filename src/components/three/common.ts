@@ -4,9 +4,12 @@
 import * as THREE from "three";
 import { Reflector } from "three/addons/objects/Reflector.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { L, W } from "@/lib/rink";
+import type { Sport } from "@/lib/sports";
 
 export interface Env { mirror: Reflector; dispose?: () => void }
+
+/** The surface the environment is built around (x 0–length, z 0–width). */
+export type Surface = Pick<Sport, "length" | "width" | "surface">;
 
 export const v3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
@@ -103,7 +106,7 @@ export function addIce(scene: THREE.Scene, renderer: THREE.WebGLRenderer, x0: nu
 }
 
 /* ---------- the bandy sarg along the long sides: low orange-red tubes ---------- */
-export function addSarg(scene: THREE.Scene) {
+export function addSarg(scene: THREE.Scene, { length: L, width: W }: Surface) {
   const sarg = new THREE.MeshStandardMaterial({ color: 0xd8462b, roughness: 0.5 });
   for (const z of [-0.15, W + 0.15]) {
     const s = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, L, 12), sarg);
@@ -114,7 +117,7 @@ export function addSarg(scene: THREE.Scene) {
 }
 
 /* ---------- corner flags ---------- */
-export function addCornerFlags(scene: THREE.Scene) {
+export function addCornerFlags(scene: THREE.Scene, { length: L, width: W }: Surface) {
   const pole = new THREE.MeshStandardMaterial({ color: 0xf2f2f2 });
   const red = new THREE.MeshStandardMaterial({ color: 0xd32f2f });
   const flagMat = new THREE.MeshStandardMaterial({ map: canvasTex(64, 48, g => {
@@ -178,7 +181,7 @@ export function sunDir(azimuth: number, elevation: number) {
   return v3(Math.cos(a) * Math.cos(e), Math.sin(e), Math.sin(a) * Math.cos(e));
 }
 
-export function addSky(scene: THREE.Scene, sun: THREE.Vector3) {
+export function addSky(scene: THREE.Scene, sun: THREE.Vector3, { length: L, width: W }: Surface) {
   const Wd = 2048, H = 1024;
   const tex = canvasTex(Wd, H, g => {
     // zenith to horizon: deep winter blue fading to a pale, slightly warm haze
@@ -215,7 +218,7 @@ export function addSky(scene: THREE.Scene, sun: THREE.Vector3) {
 }
 
 /** Plain snow ground well beyond everything, just under the ice. */
-export function addSnowGround(scene: THREE.Scene, size = 900) {
+export function addSnowGround(scene: THREE.Scene, { length: L, width: W }: Surface, size = 900) {
   const tex = canvasTex(128, 128, g => {
     g.fillStyle = "#f3f6f9"; g.fillRect(0, 0, 128, 128);
     const r = rng(7);

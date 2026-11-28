@@ -41,6 +41,7 @@ The app uses the Next.js 16 App Router with `proxy.ts` and async `params`.
 ## Map
 - `src/components/Editor.tsx` — the board: play/edit modes, branches, quiz, passing lanes, space map, tasks, share, presentation + phone remote. Big file; the pure logic lives in `src/lib/`.
 - `src/lib/play.ts` (motion: `plan`/`frameAt`), `geom.ts`, `lines.ts` (variants), `lanes.ts`, `space.ts`, `auto.ts`, `tasks.ts`, `video.ts` (canvas + MediaRecorder export).
+- `src/lib/sports/` — sport as configuration (`Sport`: size, players, positions, start shapes, markings, 3D surface, optional features like bandy's växlingszon). A play's optional `sport` id picks one (`sportOf`); missing = bandy. Read sizes and names from the play's sport, never hard-code 105 × 65.
 - `src/components/View3D.tsx` + `three/` — first-person 3D, environments (hall/outdoor/arena), skaters.
 
 ## Rules

@@ -2,7 +2,7 @@
    reach it (turning costs a little: a skater facing away is slower to start).
    The side that arrives first owns the patch; the margin says how clearly. */
 import type { Piece, Pos } from "./types";
-import { L, W } from "./rink";
+import { DEFAULT_SPORT, type Sport } from "./sports";
 
 export const CELL = 1.5;     // metres per cell
 const SPEED = 7;             // m/s
@@ -23,8 +23,8 @@ function arrival(p: ReturnType<typeof prepare>, x: number, y: number) {
 }
 
 /** Grid of margins in seconds: > 0 = we arrive first, < 0 = they do. Row-major, cols × rows. */
-export function spaceControl(pieces: Piece[], pos: Record<string, Pos>) {
-  const cols = Math.ceil(L / CELL), rows = Math.ceil(W / CELL);
+export function spaceControl(pieces: Piece[], pos: Record<string, Pos>, sport: Sport = DEFAULT_SPORT) {
+  const cols = Math.ceil(sport.length / CELL), rows = Math.ceil(sport.width / CELL);
   const us = pieces.filter(p => p.side === "us" && pos[p.id]).map(p => prepare(pos[p.id]));
   const them = pieces.filter(p => p.side === "them" && pos[p.id]).map(p => prepare(pos[p.id]));
   const grid = new Float32Array(cols * rows);
