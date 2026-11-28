@@ -784,6 +784,12 @@ export default function Editor({ initial, readOnly = false, shared = false, role
           <button type="button" className="update-alt" onClick={() => { acked.current = shown.current; location.reload(); }}>Hämta den andra</button>
         </div>
       )}
+      {save === "error" && (
+        <div className="update conflict" role="alert">
+          <span>Kunde inte spara. Kontrollera uppkopplingen, dina ändringar är inte sparade än.</span>
+          <button type="button" className="update-go" onClick={() => { void saveNow(); }}>Försök igen</button>
+        </div>
+      )}
       <header className="top">
         <div className="title">
           {present ? <Link className="back" href={`/spel/${initial.id}`} onClick={leave}>← Avsluta presentation</Link>
