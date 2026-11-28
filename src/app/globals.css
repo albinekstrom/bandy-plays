@@ -527,3 +527,11 @@ select.field{appearance:auto}
   .editor .top .bar{flex:1 1 100%;justify-content:flex-start;flex-wrap:wrap}
 }
 .notice{padding:6px 10px;border-left:4px solid var(--rosa);background:var(--frost);color:var(--natt)}
+
+/* legal pages (/integritet, /villkor): public, plain reading column */
+.legal{max-width:640px;margin:0 auto;padding:24px 16px 48px;display:flex;flex-direction:column;gap:12px;line-height:1.55}
+.legal h2{margin:12px 0 0;font:800 22px var(--head);text-transform:uppercase;letter-spacing:.03em}
+.legal p,.legal ul{margin:0}
+.legal ul{padding-left:20px;display:flex;flex-direction:column;gap:6px}
+.legal a{color:var(--morkrosa);font-weight:600}
+.legal-draft{padding:8px 12px;border:2px solid var(--gul);background:#FFF8E1;font-size:14px}

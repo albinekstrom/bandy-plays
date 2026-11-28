@@ -13,6 +13,7 @@ export default function LoginPage() {
       <div className="title"><h1>Bandyspel</h1></div>
       <LoginForm />
       <p className="gate-alt">Ny i laget? <Link href="/registrera">Skapa konto</Link></p>
+      <p className="gate-alt"><Link href="/integritet">Integritetspolicy</Link> · <Link href="/villkor">Användarvillkor</Link></p>
     </main>
   );
 }
