@@ -12,6 +12,9 @@ export async function GET(_req: Request, ctx: RouteContext<"/api/plays/[id]">) {
   return play ? NextResponse.json(play) : NextResponse.json({ error: "not found" }, { status: 404 });
 }
 
+/** Request id for correlating log lines: Vercel's if present, else a random one. */
+const requestId = (req: Request) => req.headers.get("x-vercel-id") ?? crypto.randomUUID();
+
 export async function PUT(req: Request, ctx: RouteContext<"/api/plays/[id]">) {
   if (!(await isAdmin())) return forbidden();
   const body = await req.json().catch(() => null) as Record<string, unknown> | null;
@@ -20,7 +23,7 @@ export async function PUT(req: Request, ctx: RouteContext<"/api/plays/[id]">) {
   const parsed = body && parsePlayData(dataOf(body));
   const { id } = await ctx.params;
   if (!name || !parsed) {
-    console.error("[plays:save] rejected", { id, reason: "bad request" }); // never log the body: it is play content
+    console.error("[plays:save] PLAY_SAVE_REJECTED", { id, requestId: requestId(req) }); // never log the body: it is play content
     return NextResponse.json({ error: "bad request" }, { status: 400 });
   }
   // rev: the revision the editor built on. Tabs from before revisions don't send it and simply save.
@@ -29,11 +32,12 @@ export async function PUT(req: Request, ctx: RouteContext<"/api/plays/[id]">) {
   try {
     play = await store().update(id, name, upgrade({ ...parsed, variants: parsed.variants ?? [] }), rev);
   } catch (err) {
-    console.error("[plays:save] failed", { id, error: err instanceof Error ? err.message : "unknown" });
+    // stable code and error class only: raw driver messages can contain data
+    console.error("[plays:save] PLAY_SAVE_FAILED", { id, requestId: requestId(req), errorClass: err instanceof Error ? err.constructor.name : "unknown" });
     return NextResponse.json({ error: "save failed" }, { status: 500 });
   }
   if (play === "conflict") {
-    console.error("[plays:conflict] 409", { id, rev });
+    console.error("[plays:conflict] PLAY_SAVE_CONFLICT", { id, requestId: requestId(req), rev });
     return NextResponse.json({ error: "conflict" }, { status: 409 });
   }
   return play ? NextResponse.json({ updatedAt: play.updatedAt, revision: play.revision ?? 0 }) : NextResponse.json({ error: "not found" }, { status: 404 });

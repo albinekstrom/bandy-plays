@@ -32,8 +32,19 @@ export default function PrivacyPage() {
       <h2>Barn och unga</h2>
       <p>Spelare kan vara under 18 år. Därför ber vi inte om riktiga namn. Använd gärna ett smeknamn eller en förkortning. Det är klubben som ansvarar för att inhämta vårdnadshavares samtycke där det behövs.</p>
 
+      <h2>Rättslig grund</h2>
+      <p>[Rättslig grund, t.ex. avtal eller berättigat intresse, att fastställas tillsammans med klubben.]</p>
+
+      <h2>Delningslänkar</h2>
+      <p>Den som har en delningslänk till ett spel kan se det spelet utan att logga in. Dela länkar bara med personer som ska se spelet.</p>
+
       <h2>Hur länge</h2>
-      <p>Ett konto och dess uppgifter sparas så länge kontot finns. När ett konto tas bort raderas det. Säkerhetskopior skrivs över inom [antal] dagar.</p>
+      <p>Ett konto och dess uppgifter sparas så länge kontot finns. När ett konto tas bort raderas det.</p>
+      <ul>
+        <li>Serverloggar sparas i [antal] dagar.</li>
+        <li>Säkerhetskopior och sparade databasgrenar (Neon) sparas i [antal] dagar.</li>
+        <li>Exportfiler med spel raderas efter [antal] dagar.</li>
+      </ul>
 
       <h2>Dina rättigheter</h2>
       <p>Du har rätt att få veta vilka uppgifter som finns om dig, att få dem rättade och att få dem raderade. Du har också rätt att invända och att begränsa behandlingen. Hör av dig till klubben eller till [kontaktadress] så hjälper vi till. Du kan klaga hos Integritetsskyddsmyndigheten (IMY).</p>

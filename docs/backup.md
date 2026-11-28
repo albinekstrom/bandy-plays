@@ -20,21 +20,37 @@ Pick the fastest that fits:
 
 - **From a backup branch**: Neon console > Branches > the backup branch > **Restore** (or Branch > Reset `main` from the backup). The connection string on `main` stays the same, so no env change is needed.
 - **Point in time**: Neon console > Branches > `main` > **Restore** > choose a timestamp (or LSN). Neon also keeps a "pre-restore" branch automatically, so the restore itself can be undone.
-- Afterwards: open the site, check the play list, open a play, check `/api/version`. Tell the coaches that saves made after the restore point are lost.
+Order of work for a whole-database restore:
+
+1. **Pause writes first.** Take the app offline or into maintenance (for example a temporary deploy that answers 503, or ask all coaches to close the editor) so nobody saves during the restore.
+2. Restore (branch or point in time, see above).
+3. **Bump every play's revision past its pre-restore value**, so editors left open from before the restore get a 409 instead of silently overwriting restored data. Before restoring, note `SELECT max(revision) FROM plays;` on production (call it `M`). After restoring, run:
+   `UPDATE plays SET revision = revision + <M + 1>;`
+   (a large offset is fine; revisions only ever need to move forward).
+4. Bring the app back, open the site, check the play list, open a play, check `/api/version`.
+5. Tell all coaches to **reload** the editor before they continue, and that saves made after the restore point are lost.
 
 ## Restore a single play
 
 Do not restore over production for one play. Instead:
 
 1. Create a branch from the point in time (Neon console > Branches > Create branch > "Past data", pick a timestamp) or use the backup branch.
-2. Get its connection string. In its SQL editor run:
+2. In the branch's SQL editor run:
    `SELECT name, data, tags FROM plays WHERE id = '<play id>';`
-3. Copy the `data` JSON. In production either paste it in the production SQL editor:
-   `UPDATE plays SET data = '<json>'::jsonb, revision = revision + 1 WHERE id = '<play id>';`
-   (bumping `revision` makes open editors answer 409 instead of overwriting the restore), or, if the play was deleted, `INSERT` it with the same columns.
-4. Delete the temporary branch.
+3. In production, restore name, data and tags together in one statement:
+   ```sql
+   UPDATE plays
+   SET name = '<name>', data = '<json>'::jsonb, tags = '<tags>'::text[],
+       updated_at = now(),
+       revision = revision + 1,   -- always advance, never rewind: open editors get 409 instead of overwriting
+       share_token = NULL         -- restored plays come back unshared; share them again from the editor
+   WHERE id = '<play id>';
+   ```
+   If the play was deleted, `INSERT` it with the same columns (id, name, data, tags, revision 0, updated_at) and no share token.
+4. Tell any coach with that play open to reload.
+5. Delete the temporary branch.
 
-Check the real column names in `src/lib/store.ts` before running SQL.
+Column names are defined in `src/lib/store.ts` (`plays`: id, name, data, updated_at, share_token, tags, revision); there is no `created_at`.
 
 ## JSON export
 
@@ -43,6 +59,8 @@ Check the real column names in `src/lib/store.ts` before running SQL.
 ```
 DATABASE_URL='postgres://...' npx tsx scripts/export-plays.ts backup-plays.json
 ```
+
+The export contains only recovery fields (id, name, data, tags, revision, updated_at). Share tokens are deliberately left out, so plays restored from an export come back unshared.
 
 Keep the output private: it contains the club's plays. Never commit it (the repo is public). A nightly export to private storage (for example a scheduled GitHub Action writing to a private bucket) is optional and not set up.
 
