@@ -39,8 +39,8 @@ export function ballPoint(ball: Ball, pos: Record<string, Pos>): Pt {
 /* ---------- motion between two steps ----------
    Everyone skates at the same speed, so short runs finish early.
    Players face the way they skate, then turn to the direction set
-   for the next step. A pass leaves when the passer's run ends and,
-   if needed, waits so the ball meets the receiver on arrival. */
+   for the next step. A pass is its own phase between two steps:
+   it leaves once every run in the step is done. */
 
 export const SKATE = 6;   // m per second on screen
 export const BALL_SPEED = 20;
@@ -59,7 +59,8 @@ const moveArrow = (s: Step, id: string) => s.arrows.find(r => r.kind !== "pass" 
 export function arrowCurve(a: Arrow, step: Step, next: Step | undefined): Pt[] {
   if (a.kind === "pass") {
     const to = next ? ballPoint(next.ball, next.pos) : a.pts[a.pts.length - 1];
-    return curvePts(passOrigin(step, next), to, null);
+    const from = passOrigin(step, next);
+    return a.lob ? lobArc(from, to) : curvePts(from, to, null);
   }
   const p = a.piece ? step.pos[a.piece] : undefined;
   const q = a.piece ? next?.pos[a.piece] : undefined;
@@ -69,15 +70,27 @@ export function arrowCurve(a: Arrow, step: Step, next: Step | undefined): Pt[] {
   return spline([from, ...a.pts.slice(1, -1), to]);
 }
 
-/** Where the ball leaves from: the passer's spot `passAt` of the way through his own run. */
+/** Where the ball leaves from: the passer's spot when his run is done (passes come after the runs;
+    an older `passAt` is kept in the data but no longer used). */
 export function passOrigin(step: Step, next: Step | undefined): Pt {
   const passer = step.ball.holder;
   const run = passer && next?.pos[passer] ? moveArrow(step, passer) : undefined;
   if (!passer || !run) return ballPoint(step.ball, step.pos);
   const path = arrowCurve(run, step, next);
-  const u = ease(clamp(step.passAt ?? 1, 0, 1));
-  const p = along(path, u), q = along(path, Math.min(1, u + 0.02)), o = along(path, Math.max(0, u - 0.02));
-  return carried({ x: p[0], y: p[1], dir: heading(o, q) });
+  const n = path.length;
+  return carried({ x: path[n - 1][0], y: path[n - 1][1], dir: n > 1 ? heading(path[n - 2], path[n - 1]) : step.pos[passer].dir });
+}
+
+/** How high (in metres on the board, drawn towards the top) a lob's arc bows: longer lobs bow more. */
+export const lobHeight = (len: number) => clamp(len * 0.2, 1.5, 8);
+
+/** A lob seen from above: the straight line bowed up into an arc. The ball flies along this arc. */
+export function lobArc(from: Pt, to: Pt, n = 24): Pt[] {
+  const h = lobHeight(dist(from, to));
+  return Array.from({ length: n + 1 }, (_, i) => {
+    const u = i / n;
+    return [lerp(from[0], to[0], u), lerp(from[1], to[1], u) - h * Math.sin(Math.PI * u)] as Pt;
+  });
 }
 
 /* ---------- the play is built in order, from step 1 ----------
@@ -120,6 +133,7 @@ export interface Plan {
   b: Step;
   T: number;
   movers: Record<string, Mover>;
+  /** path: along the ice (straight) for timing and 3D; a lob's drawn arc is lobArc(path ends). */
   pass: { path: Pt[]; start: number; flight: number; lob: boolean } | null;
 }
 
@@ -139,13 +153,11 @@ export function plan(a: Step, b: Step): Plan {
   let pass: Plan["pass"] = null;
   const arrow = a.arrows.find(r => r.kind === "pass");
   if (arrow) {
-    const path = arrowCurve(arrow, a, b);
+    const path = curvePts(passOrigin(a, b), ballPoint(b.ball, b.pos), null);
     const lob = !!arrow.lob;
     const flight = Math.max(0.25, polyLength(path) / (lob ? LOB_SPEED : BALL_SPEED));
-    const passer = a.ball.holder, rec = b.ball.holder;
-    let start = passer && moveArrow(a, passer) ? movers[passer].dur * clamp(a.passAt ?? 1, 0, 1) : 0;
-    // with no timing set, wait so the ball meets the receiver; a set timing is kept as drawn
-    if (rec && movers[rec] && (a.passAt === undefined || !passer || !moveArrow(a, passer))) start = Math.max(start, movers[rec].dur - flight);
+    // the pass is its own phase: it leaves once everyone has skated
+    const start = Math.max(0, ...Object.values(movers).map(m => m.dur));
     pass = { path, start, flight, lob };
     T = Math.max(T, start + flight + 0.2);
   }
@@ -174,14 +186,17 @@ export function frameAt(pl: Plan, t: number): Frame {
   for (const id of Object.keys(pl.movers)) pos[id] = moverAt(pl.movers[id], t);
   const { a, b, pass } = pl;
   let ball: Pt;
-  let lift = 0;
+  let lift = 0, arc = 0;
   if (pass) {
     const passer = a.ball.holder, rec = b.ball.holder;
     if (t < pass.start) ball = passer && pos[passer] ? carried(pos[passer]) : ballPoint(a.ball, a.pos);
     else if (t < pass.start + pass.flight) {
       const u = (t - pass.start) / pass.flight;
       ball = along(pass.path, u);
-      if (pass.lob) lift = Math.sin(Math.PI * u); // up and down again over the players
+      if (pass.lob) { // up and down again over the players, drawn along the arc
+        lift = Math.sin(Math.PI * u);
+        arc = lift * lobHeight(polyLength(pass.path));
+      }
     }
     else ball = rec && pos[rec] ? carried(pos[rec]) : pass.path[pass.path.length - 1];
   } else if (a.ball.holder && a.ball.holder === b.ball.holder && pos[a.ball.holder]) {
@@ -190,7 +205,7 @@ export function frameAt(pl: Plan, t: number): Frame {
     const s = ballPoint(a.ball, a.pos), e = ballPoint(b.ball, b.pos), u = ease(clamp(t / pl.T, 0, 1));
     ball = [lerp(s[0], e[0], u), lerp(s[1], e[1], u)];
   }
-  return { pos, ball, lift };
+  return { pos, ball, lift, arc };
 }
 
 export interface Frame {
@@ -198,6 +213,8 @@ export interface Frame {
   ball: Pt;
   /** Height of a lobbed ball, 0 (on the ice) to 1 (top of the arc). */
   lift?: number;
+  /** For the top view: how far up the board a lob is drawn above its spot on the ice (metres). */
+  arc?: number;
 }
 
 export function stillFrame(step: Step): Frame {

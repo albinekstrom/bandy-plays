@@ -18,3 +18,11 @@ export const THEM_START: [number, number][] = [
   [103.5, MIDY], [93, MIDY], [85, 13], [85, 52], [75, 18], [75, 47],
   [62, 20], [62, MIDY], [62, 45], [45, 25], [45, 40],
 ];
+
+/* The substitution zone (växlingszon) runs along the middle line, ZONE metres to each side.
+   Set per play (PlayData.zone); plays without it use the default. */
+export const ZONE = 5;
+export const ZONE_MIN = 2, ZONE_MAX = 15;
+export const zoneOf = (d: { zone?: number }) =>
+  typeof d.zone === "number" && d.zone >= ZONE_MIN && d.zone <= ZONE_MAX ? d.zone : ZONE;
+export const zoneLabel = (z: number) => `VÄXLINGSZON ±${String(z).replace(".", ",")} M`;

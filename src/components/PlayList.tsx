@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import DeleteButton from "./DeleteButton";
+import PlayMenu from "./PlayMenu";
 import { SUGGESTED_TAGS, MAX_TAGS, MAX_TAG_LEN, cleanTags } from "@/lib/tags";
 
 interface Item { id: string; name: string; date: string; tags?: string[] }
@@ -94,7 +94,7 @@ export default function PlayList({ plays, canEdit = false }: { plays: Item[]; ca
                 {canEdit && <>
                   <button className={"btn ghost sm" + (isOpen ? " on" : "")} type="button" aria-expanded={isOpen}
                     onClick={() => { setOpen(isOpen ? null : p.id); setDraft(""); setErr(""); }}>Taggar</button>
-                  <DeleteButton id={p.id} />
+                  <PlayMenu id={p.id} name={p.name} />
                 </>}
                 {canEdit && isOpen && (
                   <div className="tagedit">

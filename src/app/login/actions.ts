@@ -26,7 +26,10 @@ export async function login(_prev: string | null, form: FormData): Promise<strin
 export async function register(_prev: string | null, form: FormData): Promise<string | null> {
   const u = await usersReady();
   const code = await u.teamCode();
-  if (!code || !(await checkPassword(String(form.get("code") ?? ""), code))) { await slow(); return "Fel lagkod"; }
+  // codes are shown in capitals, so "k7m4qx9p" counts too; older codes keep their exact case
+  const given = String(form.get("code") ?? "").trim();
+  const codeOk = !!code && ((await checkPassword(given, code)) || (given !== given.toUpperCase() && await checkPassword(given.toUpperCase(), code)));
+  if (!codeOk) { await slow(); return "Fel lagkod"; }
   const name = String(form.get("name") ?? "").trim().toLowerCase();
   const pass = String(form.get("pass") ?? ""), pass2 = String(form.get("pass2") ?? "");
   if (!NAME_RE.test(name)) return "Namnet ska vara 2–20 bokstäver (A–Ö), inga mellanslag eller siffror";

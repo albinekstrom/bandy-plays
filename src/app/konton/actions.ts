@@ -35,13 +35,14 @@ export async function changePassword(_prev: Result, form: FormData): Promise<Res
   return { ok: true, msg: "Lösenordet är bytt" };
 }
 
-export async function changeTeamCode(_prev: Result, form: FormData): Promise<Result> {
+export async function changeTeamCode(_prev: Result, form: FormData): Promise<{ ok: boolean; msg: string; code?: string } | null> {
   if (!(await isAdmin())) return { ok: false, msg: "Bara admin kan byta lagkod" };
-  const code = String(form.get("code") ?? ""), code2 = String(form.get("code2") ?? "");
+  // capitals only, so it can be read out and typed in any case
+  const code = String(form.get("code") ?? "").trim().toUpperCase();
   if (code.length < MIN_TEAM_CODE) return { ok: false, msg: `Lagkoden ska vara minst ${MIN_TEAM_CODE} tecken` };
-  if (code !== code2) return { ok: false, msg: "Lagkoderna är inte lika" };
+  if (code.length > 40) return { ok: false, msg: "Lagkoden får vara högst 40 tecken" };
   await (await usersReady()).setTeamCode(await hashPassword(code));
-  return { ok: true, msg: "Lagkoden är bytt. Ge den nya koden till laget." };
+  return { ok: true, msg: "Lagkoden är sparad. Den gamla slutar fungera. Ge den nya till laget:", code };
 }
 
 /* Admin: make someone admin or player. There is always at least one admin. */

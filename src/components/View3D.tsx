@@ -157,7 +157,7 @@ interface Player {
   chest: THREE.Vector3;
 }
 
-export default function View3D({ pieces, step, steps, speed = 1, viewer, k, count, onStep, onClose }: {
+export default function View3D({ pieces, step, steps, speed = 1, viewer, k, count, onStep, onViewer, onClose }: {
   pieces: Piece[];
   step: Step;
   /** The line of steps being viewed (step === steps[k]); playback needs at least two. */
@@ -168,6 +168,8 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
   k: number;
   count: number;
   onStep: (k: number) => void;
+  /** Switch whose eyes we see through (any player on the ice); hidden when not given. */
+  onViewer?: (id: string) => void;
   onClose: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -178,7 +180,12 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
   const [hud, setHud] = useState<Hud>({ edges: [], hidden: 0, partial: 0 });
   const line = useMemo(() => steps ?? [step], [steps, step]);
   const me = pieces.find(p => p.id === viewer);
-  const myName = me ? (me.label ? NAMES[me.label] ?? me.label : "Motståndare") : "";
+  // everyone on the ice in this step: our players by position, opponents numbered
+  const onIce = pieces.filter(p => step.pos[p.id]);
+  const ours = onIce.filter(p => p.side === "us");
+  const theirs = onIce.filter(p => p.side === "them");
+  const nameOf = (p: Piece, i: number) => (p.label ? NAMES[p.label] ?? p.label : `Motståndare ${i + 1}`);
+  const myName = me ? nameOf(me, Math.max(0, theirs.indexOf(me))) : "";
 
   // shared with the render loop, which outlives renders
   const poseRef = useRef<Pose>(stillPose(step));
@@ -572,6 +579,21 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
         <div className="title">
           <span className="kicker">Steg {k + 1}/{count}{step.text ? " · " + step.text : ""}</span>
           <h1>{eyes ? "Ser som" : "Följer"} {myName}</h1>
+          {onViewer && (
+            <label className="v3d-who">
+              <span>Byt perspektiv</span>
+              <select value={viewer} onChange={e => onViewer(e.target.value)}>
+                <optgroup label="Vårt lag">
+                  {ours.map((p, i) => <option key={p.id} value={p.id}>{p.label ? `${p.label} · ${nameOf(p, i)}` : nameOf(p, i)}</option>)}
+                </optgroup>
+                {theirs.length > 0 && (
+                  <optgroup label="Motståndare">
+                    {theirs.map((p, i) => <option key={p.id} value={p.id}>{nameOf(p, i)}</option>)}
+                  </optgroup>
+                )}
+              </select>
+            </label>
+          )}
         </div>
         <div className="v3d-side">
           <button className="btn" type="button" onClick={onClose}>Stäng</button>

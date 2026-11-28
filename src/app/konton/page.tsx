@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { currentUser } from "@/lib/auth";
 import { usersReady, ROLE_NAMES } from "@/lib/users";
 import { setUserRole } from "./actions";
+import { randomTeamCode } from "@/lib/teamcode";
 import { AddUserForm, ChangePasswordForm, TeamCodeForm } from "./forms";
 
 export const metadata: Metadata = { title: "Konton · Bandyspel" };
@@ -48,8 +49,8 @@ export default async function Accounts() {
         </section>
         <section className="acc">
           <h2>Lagkod</h2>
-          <p className="acc-note">Med lagkoden kan spelare skapa egna konton under &quot;Skapa konto&quot; på inloggningssidan. De blir spelare. Från början är koden samma som det gamla gemensamma lösenordet.</p>
-          <TeamCodeForm />
+          <p className="acc-note">Med lagkoden kan spelare skapa egna konton under &quot;Skapa konto&quot; på inloggningssidan. De blir spelare. Spara en ny kod så slutar den gamla fungera; konton som redan finns påverkas inte.</p>
+          <TeamCodeForm suggestion={randomTeamCode()} />
         </section>
       </>}
       <section className="acc">
