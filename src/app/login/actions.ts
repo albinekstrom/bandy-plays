@@ -1,7 +1,8 @@
 "use server";
 import { redirect } from "next/navigation";
 import { startSession, endSession } from "@/lib/auth";
-import { usersReady, hashPassword, checkPassword, NAME_RE, MIN_PASSWORD } from "@/lib/users";
+import { usersReady, hashPassword, checkPassword, NAME_RE } from "@/lib/users";
+import { passwordProblem, MAX_PASSWORD } from "@/lib/password";
 import { gate, clientKey, LIMITS, TOO_MANY } from "@/lib/ratelimit";
 
 const slow = () => new Promise(r => setTimeout(r, 600)); // makes guessing slower
@@ -17,7 +18,7 @@ export async function login(_prev: string | null, form: FormData): Promise<strin
   const g = await gate([{ key: "login:ip:" + await clientKey(), limit: LIMITS.ip }, { key: nameKey, limit: LIMITS.name }]);
   if (g.wait) { await slow(); return TOO_MANY; }
   const hash = NAME_RE.test(name) ? await u.hash(name) : null;
-  const ok = await checkPassword(pass, hash ?? DUMMY_HASH);
+  const ok = pass.length <= MAX_PASSWORD && await checkPassword(pass, hash ?? DUMMY_HASH);
   if (!hash || !ok) { await g.fail(); await slow(); return "Fel namn eller lösenord"; }
   await g.clear([nameKey]); // the IP count stays: one good login must not reset a guessing run
   await startSession(name);
@@ -37,7 +38,8 @@ export async function register(_prev: string | null, form: FormData): Promise<st
   const name = String(form.get("name") ?? "").trim().toLowerCase();
   const pass = String(form.get("pass") ?? ""), pass2 = String(form.get("pass2") ?? "");
   if (!NAME_RE.test(name)) return "Namnet ska vara 2–20 bokstäver (A–Ö), inga mellanslag eller siffror";
-  if (pass.length < MIN_PASSWORD) return `Lösenordet ska vara minst ${MIN_PASSWORD} tecken`;
+  const bad = passwordProblem(pass, name);
+  if (bad) return bad;
   if (pass !== pass2) return "Lösenorden är inte lika";
   if (!(await u.add(name, await hashPassword(pass), "player"))) return "Namnet är upptaget";
   await startSession(name);

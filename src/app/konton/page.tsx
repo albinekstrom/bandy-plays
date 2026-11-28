@@ -5,7 +5,7 @@ import { currentUser } from "@/lib/auth";
 import { usersReady, ROLE_NAMES } from "@/lib/users";
 import { setUserRole, logoutEverywhere } from "./actions";
 import { randomTeamCode } from "@/lib/teamcode";
-import { AddUserForm, ChangePasswordForm, TeamCodeForm } from "./forms";
+import { AddUserForm, ChangePasswordForm, TeamCodeForm, PlayerTools, RemoveMyAccountForm } from "./forms";
 
 export const metadata: Metadata = { title: "Konton · Bandyspel" };
 
@@ -27,7 +27,7 @@ export default async function Accounts() {
       {admin && <>
         <section className="acc">
           <h2>Alla konton</h2>
-          <p className="acc-note">Admin kan ändra spel och konton. Spelare kan titta, köra quiz och 3D.</p>
+          <p className="acc-note">Admin kan ändra spel och konton. Spelare kan titta, köra quiz och 3D. Under &quot;Hantera&quot; kan du ge en spelare ett nytt lösenord eller ta bort kontot.</p>
           <ul className="acc-rows">
             {all.map(u => (
               <li key={u.name}>
@@ -39,6 +39,7 @@ export default async function Accounts() {
                       disabled={u.role === r || (r === "player" && u.role === "admin" && admins <= 1)}>{ROLE_NAMES[r]}</button>
                   ))}
                 </form>
+                {u.role === "player" && u.name !== me.name && <PlayerTools name={u.name} />}
               </li>
             ))}
           </ul>
@@ -61,6 +62,11 @@ export default async function Accounts() {
         <h2>Logga ut överallt</h2>
         <p className="acc-note">Loggar ut dig på alla telefoner och datorer, också den här. Gör det om du har loggat in på en dator som inte är din.</p>
         <form action={logoutEverywhere}><button className="btn ghost" type="submit">Logga ut överallt</button></form>
+      </section>
+      <section className="acc">
+        <h2>Ta bort ditt konto</h2>
+        <p className="acc-note">Ditt namn och lösenord tas bort och du loggas ut. Spelen finns kvar. Det går inte att ångra.</p>
+        <RemoveMyAccountForm lastAdmin={admin && admins <= 1} />
       </section>
     </main>
   );

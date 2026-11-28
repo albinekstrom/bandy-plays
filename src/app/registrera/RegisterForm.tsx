@@ -1,6 +1,7 @@
 "use client";
 import { useActionState } from "react";
 import { register } from "../login/actions";
+import { MIN_PASSWORD } from "@/lib/password";
 
 export default function RegisterForm() {
   const [msg, action, pending] = useActionState(register, null);
@@ -11,11 +12,11 @@ export default function RegisterForm() {
       <input id="code" name="code" className="field" autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false} required autoFocus />
       <label htmlFor="name">Namn</label>
       <input id="name" name="name" className="field field-name" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} pattern="[A-Za-zÅÄÖåäö]{2,20}" required />
-      <label htmlFor="pass">Lösenord (minst 8 tecken)</label>
-      <input id="pass" name="pass" type="password" className="field" autoComplete="new-password" minLength={8} required />
+      <label htmlFor="pass">Lösenord (minst {MIN_PASSWORD} tecken)</label>
+      <input id="pass" name="pass" type="password" className="field" autoComplete="new-password" minLength={MIN_PASSWORD} required />
       <label htmlFor="pass2">Lösenord igen</label>
       <div className="row">
-        <input id="pass2" name="pass2" type="password" autoComplete="new-password" minLength={8} required />
+        <input id="pass2" name="pass2" type="password" autoComplete="new-password" minLength={MIN_PASSWORD} required />
         <button className="btn" type="submit" disabled={pending} aria-label="Skapa konto">→</button>
       </div>
       <p className="msg" role="status" aria-live="polite">{msg}</p>

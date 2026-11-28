@@ -2,45 +2,111 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { isAdmin, currentUser, startSession, endSession } from "@/lib/auth";
-import { usersReady, hashPassword, checkPassword, NAME_RE, MIN_PASSWORD, type Role } from "@/lib/users";
+import { usersReady, hashPassword, checkPassword, NAME_RE, type Role } from "@/lib/users";
+import { passwordProblem, MAX_PASSWORD } from "@/lib/password";
 import { MIN_TEAM_CODE } from "@/lib/teamcode";
-import { gate, LIMITS, TOO_MANY } from "@/lib/ratelimit";
+import { gate, forgetName, LIMITS, TOO_MANY } from "@/lib/ratelimit";
 
 export type Result = { ok: boolean; msg: string } | null;
+
+const NOT_LOGGED_IN = { ok: false, msg: "Du är inte inloggad" };
+
+/** The new password from the form (pass + pass2), or what is wrong with it. */
+function newPassword(form: FormData, name: string): { pass: string } | { msg: string } {
+  const pass = String(form.get("pass") ?? ""), pass2 = String(form.get("pass2") ?? "");
+  const bad = passwordProblem(pass, name);
+  if (bad) return { msg: bad };
+  if (pass !== pass2) return { msg: "Lösenorden är inte lika" };
+  return { pass };
+}
+
+/** Is `given` my current password? Rate-limited per account; null when it is. */
+async function wrongPassword(me: string, given: string): Promise<string | null> {
+  const key = "pw:name:" + me;
+  const g = await gate([{ key, limit: LIMITS.name }]);
+  if (g.wait) return TOO_MANY;
+  const hash = await (await usersReady()).hash(me);
+  if (!hash || given.length > MAX_PASSWORD || !(await checkPassword(given, hash))) {
+    await g.fail();
+    await new Promise(r => setTimeout(r, 600));
+    return "Nuvarande lösenord stämmer inte";
+  }
+  await g.clear([key]);
+  return null;
+}
+
+/** An admin may reset or remove a player who is not himself (admins are made players first). */
+async function playerToManage(form: FormData): Promise<{ name: string } | { msg: string }> {
+  const me = await currentUser();
+  if (me?.role !== "admin") return { msg: "Bara admin kan göra det" };
+  const name = String(form.get("name") ?? "");
+  if (name === me.name) return { msg: "Det gör du för ditt eget konto längre ner" };
+  const a = await (await usersReady()).account(name);
+  if (!a) return { msg: "Kontot finns inte" };
+  if (a.role !== "player") return { msg: "Gör kontot till spelare först" };
+  return { name };
+}
 
 export async function addUser(_prev: Result, form: FormData): Promise<Result> {
   if (!(await isAdmin())) return { ok: false, msg: "Bara admin kan lägga till konton" };
   const role: Role = form.get("role") === "admin" ? "admin" : "player";
   const u = await usersReady();
   const name = String(form.get("name") ?? "").trim().toLowerCase();
-  const pass = String(form.get("pass") ?? ""), pass2 = String(form.get("pass2") ?? "");
   if (!NAME_RE.test(name)) return { ok: false, msg: "Namnet ska vara 2–20 bokstäver (A–Ö), inga mellanslag eller siffror" };
-  if (pass.length < MIN_PASSWORD) return { ok: false, msg: `Lösenordet ska vara minst ${MIN_PASSWORD} tecken` };
-  if (pass !== pass2) return { ok: false, msg: "Lösenorden är inte lika" };
-  if (!(await u.add(name, await hashPassword(pass), role))) return { ok: false, msg: "Namnet är upptaget" };
+  const pw = newPassword(form, name);
+  if ("msg" in pw) return { ok: false, msg: pw.msg };
+  if (!(await u.add(name, await hashPassword(pw.pass), role))) return { ok: false, msg: "Namnet är upptaget" };
   revalidatePath("/konton");
   return { ok: true, msg: `Kontot ${name.toUpperCase()} är skapat` };
 }
 
 export async function changePassword(_prev: Result, form: FormData): Promise<Result> {
   const me = (await currentUser())?.name;
-  if (!me) return { ok: false, msg: "Du är inte inloggad" };
-  const u = await usersReady();
-  const g = await gate([{ key: "pw:name:" + me, limit: LIMITS.name }]);
-  if (g.wait) return { ok: false, msg: TOO_MANY };
-  const hash = await u.hash(me);
-  if (!hash || !(await checkPassword(String(form.get("old") ?? ""), hash))) {
-    await g.fail();
-    await new Promise(r => setTimeout(r, 600));
-    return { ok: false, msg: "Nuvarande lösenord stämmer inte" };
-  }
-  await g.clear(["pw:name:" + me]);
-  const pass = String(form.get("pass") ?? ""), pass2 = String(form.get("pass2") ?? "");
-  if (pass.length < MIN_PASSWORD) return { ok: false, msg: `Lösenordet ska vara minst ${MIN_PASSWORD} tecken` };
-  if (pass !== pass2) return { ok: false, msg: "Lösenorden är inte lika" };
+  if (!me) return NOT_LOGGED_IN;
+  const wrong = await wrongPassword(me, String(form.get("old") ?? ""));
+  if (wrong) return { ok: false, msg: wrong };
+  const pw = newPassword(form, me);
+  if ("msg" in pw) return { ok: false, msg: pw.msg };
   // ends every other session; this browser gets a fresh cookie and stays logged in
-  await startSession(me, (await u.setHash(me, await hashPassword(pass))) ?? undefined);
+  await startSession(me, (await (await usersReady()).setHash(me, await hashPassword(pw.pass))) ?? undefined);
   return { ok: true, msg: "Lösenordet är bytt. Du är utloggad på alla andra enheter." };
+}
+
+/* Admin: a new password for a player who forgot his. His sessions end. */
+export async function resetPassword(_prev: Result, form: FormData): Promise<Result> {
+  const who = await playerToManage(form);
+  if ("msg" in who) return { ok: false, msg: who.msg };
+  const pw = newPassword(form, who.name);
+  if ("msg" in pw) return { ok: false, msg: pw.msg };
+  await (await usersReady()).setHash(who.name, await hashPassword(pw.pass));
+  await forgetName(who.name); // a locked-out player can log in with the new password at once
+  return { ok: true, msg: `${who.name.toUpperCase()} har fått ett nytt lösenord. Ge det till spelaren.` };
+}
+
+/* Admin: remove a player's account. */
+export async function removeUser(_prev: Result, form: FormData): Promise<Result> {
+  const who = await playerToManage(form);
+  if ("msg" in who) return { ok: false, msg: who.msg };
+  await (await usersReady()).remove(who.name);
+  await forgetName(who.name);
+  revalidatePath("/konton");
+  return { ok: true, msg: `Kontot ${who.name.toUpperCase()} är borttaget` };
+}
+
+/* Remove my own account (needs my password). The last admin can't. */
+export async function removeMyAccount(_prev: Result, form: FormData): Promise<Result> {
+  const me = await currentUser();
+  if (!me) return NOT_LOGGED_IN;
+  const u = await usersReady();
+  if (me.role === "admin" && (await u.list()).filter(x => x.role === "admin").length <= 1) {
+    return { ok: false, msg: "Du är enda admin. Gör någon annan till admin först." };
+  }
+  const wrong = await wrongPassword(me.name, String(form.get("old") ?? ""));
+  if (wrong) return { ok: false, msg: wrong };
+  await u.remove(me.name);
+  await forgetName(me.name);
+  await endSession();
+  redirect("/login");
 }
 
 export async function changeTeamCode(_prev: Result, form: FormData): Promise<{ ok: boolean; msg: string; code?: string } | null> {

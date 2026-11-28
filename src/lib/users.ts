@@ -10,7 +10,6 @@ import { promisify } from "node:util";
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number) => Promise<Buffer>;
 
 export const NAME_RE = /^[a-zåäö]{2,20}$/;
-export const MIN_PASSWORD = 8;
 
 export async function hashPassword(pw: string) {
   const salt = randomBytes(16);
@@ -46,6 +45,8 @@ interface UserStore {
   setHash(name: string, hash: string): Promise<number | null>;
   /** Ends all sessions of `name`. The new session version, or null. */
   bump(name: string): Promise<number | null>;
+  /** Deletes the account (name, password hash, role: all we store about a person). */
+  remove(name: string): Promise<boolean>;
   /** The team code people need to create their own account (hashed). */
   teamCode(): Promise<string | null>;
   setTeamCode(hash: string): Promise<void>;
@@ -99,6 +100,15 @@ const fileStore: UserStore = {
       return u.ver;
     });
   },
+  async remove(name) {
+    return locked(FILE, async () => {
+      const all = await readAll();
+      const rest = all.filter(x => x.name !== name);
+      if (rest.length === all.length) return false;
+      await writeAll(rest);
+      return true;
+    });
+  },
   async teamCode() { return (await readSettings()).teamCode ?? null; },
   async setTeamCode(hash) {
     return locked(SETTINGS, async () => {
@@ -145,6 +155,7 @@ function neonStore(url: string): UserStore {
       await init();
       return ((await sql`UPDATE users SET session_version = session_version + 1 WHERE name = ${name} RETURNING session_version`) as { session_version: number }[])[0]?.session_version ?? null;
     },
+    async remove(name) { await init(); return ((await sql`DELETE FROM users WHERE name = ${name} RETURNING name`) as unknown[]).length > 0; },
     async teamCode() { await init(); return ((await sql`SELECT value FROM settings WHERE key = 'team_code'`) as { value: string }[])[0]?.value ?? null; },
     async setTeamCode(hash) {
       await init();

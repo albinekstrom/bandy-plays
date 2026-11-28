@@ -33,7 +33,7 @@ The app uses the Next.js 16 App Router with `proxy.ts` and async `params`.
 - Units are metres: x 0–105 along the rink (we attack towards +x), y 0–65 across; directions in degrees, 0 = +x.
 
 ## Auth
-- Accounts: name (stored lowercase, shown in capitals) + scrypt password. Session cookie `<name>.<exp>.<hmac>` signed with `AUTH_SECRET` (`src/lib/session.ts`).
+- Accounts: name (stored lowercase, shown in capitals) + scrypt password. Session cookie `<name>.<exp>.<version>.<hmac>` signed with `AUTH_SECRET` (`src/lib/session.ts`); `currentUser()` refuses it when `users.session_version` has moved on (password change, role change, "Logga ut överallt"); old 3-part cookies count as version 0. Failed logins, team codes and password checks are rate-limited in `src/lib/ratelimit.ts`; new passwords go through `passwordProblem` (`src/lib/password.ts`).
 - Roles: **admin** (edit plays, accounts, team code) and **player** (watch, quiz, 3D). Enforce in the API/server actions with `isAdmin()` / `currentUser()` from `src/lib/auth.ts`, not only in the UI.
 - First start: `APP_PASSWORD` seeds the account `daniel` (admin) and the team code for sign-up.
 - Public without login: `/login`, `/registrera`, `/dela/<token>` (read-only shared play). See the matcher in `src/proxy.ts`.
