@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { foreignOrigin } from "@/lib/origin";
 import { loggedIn } from "@/lib/auth";
 import { remotes, CMDS } from "@/lib/remote";
 
@@ -16,6 +17,8 @@ export async function GET(_req: Request, ctx: RouteContext<"/api/fjarr/[code]">)
 
 /* The phone sends a command. */
 export async function POST(req: Request, ctx: RouteContext<"/api/fjarr/[code]">) {
+  const foreign = foreignOrigin(req);
+  if (foreign) return foreign;
   if (!(await loggedIn())) return unauthorized();
   const { code } = await ctx.params;
   const cmd = (await req.json().catch(() => null))?.cmd;
@@ -26,6 +29,8 @@ export async function POST(req: Request, ctx: RouteContext<"/api/fjarr/[code]">)
 
 /* The screen reports what it shows. */
 export async function PUT(req: Request, ctx: RouteContext<"/api/fjarr/[code]">) {
+  const foreign = foreignOrigin(req);
+  if (foreign) return foreign;
   if (!(await loggedIn())) return unauthorized();
   const { code } = await ctx.params;
   const text = await req.text();

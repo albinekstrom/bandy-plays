@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { foreignOrigin } from "@/lib/origin";
 import { loggedIn, isAdmin } from "@/lib/auth";
 import { store } from "@/lib/store";
 import { newPlayData } from "@/lib/play";
@@ -12,6 +13,8 @@ export async function GET() {
 /* A new empty play, or with { copyOf: id } a copy of an existing one
    (all its data and tags, but not its share link). */
 export async function POST(req: Request) {
+  const foreign = foreignOrigin(req);
+  if (foreign) return foreign;
   if (!(await isAdmin())) return NextResponse.json({ error: "forbidden" }, { status: 403 });
   const body = await req.json().catch(() => null);
   const copyOf = typeof body?.copyOf === "string" ? body.copyOf : null;
