@@ -3,7 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentUser } from "@/lib/auth";
 import { usersReady, ROLE_NAMES } from "@/lib/users";
-import { setUserRole } from "./actions";
+import { setUserRole, logoutEverywhere } from "./actions";
 import { randomTeamCode } from "@/lib/teamcode";
 import { AddUserForm, ChangePasswordForm, TeamCodeForm } from "./forms";
 
@@ -56,6 +56,11 @@ export default async function Accounts() {
       <section className="acc">
         <h2>Byt ditt lösenord</h2>
         <ChangePasswordForm />
+      </section>
+      <section className="acc">
+        <h2>Logga ut överallt</h2>
+        <p className="acc-note">Loggar ut dig på alla telefoner och datorer, också den här. Gör det om du har loggat in på en dator som inte är din.</p>
+        <form action={logoutEverywhere}><button className="btn ghost" type="submit">Logga ut överallt</button></form>
       </section>
     </main>
   );

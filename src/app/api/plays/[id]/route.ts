@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { loggedIn, isAdmin } from "@/lib/auth";
+import { currentUser, isAdmin } from "@/lib/auth";
 import { store } from "@/lib/store";
 import { dataOf, parsePlayData, upgrade } from "@/lib/schema";
 
@@ -7,7 +7,7 @@ const unauthorized = () => NextResponse.json({ error: "unauthorized" }, { status
 const forbidden = () => NextResponse.json({ error: "forbidden" }, { status: 403 });
 
 export async function GET(_req: Request, ctx: RouteContext<"/api/plays/[id]">) {
-  if (!(await loggedIn())) return unauthorized();
+  if (!(await currentUser())) return unauthorized();
   const play = await store().get((await ctx.params).id);
   return play ? NextResponse.json(play) : NextResponse.json({ error: "not found" }, { status: 404 });
 }

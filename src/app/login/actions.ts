@@ -1,19 +1,12 @@
 "use server";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { COOKIE, MAX_AGE, makeToken } from "@/lib/session";
+import { startSession, endSession } from "@/lib/auth";
 import { usersReady, hashPassword, checkPassword, NAME_RE, MIN_PASSWORD } from "@/lib/users";
 import { gate, clientKey, LIMITS, TOO_MANY } from "@/lib/ratelimit";
 
 const slow = () => new Promise(r => setTimeout(r, 600)); // makes guessing slower
 // checked when the name is unknown, so both cases take as long (scrypt of "x")
 const DUMMY_HASH = "scrypt$AAAAAAAAAAAAAAAAAAAAAA==$" + "A".repeat(86) + "==";
-
-async function startSession(name: string) {
-  (await cookies()).set(COOKIE, await makeToken(name), {
-    httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: MAX_AGE,
-  });
-}
 
 export async function login(_prev: string | null, form: FormData): Promise<string | null> {
   const u = await usersReady();
@@ -52,6 +45,6 @@ export async function register(_prev: string | null, form: FormData): Promise<st
 }
 
 export async function logout() {
-  (await cookies()).delete(COOKIE);
+  await endSession();
   redirect("/login");
 }

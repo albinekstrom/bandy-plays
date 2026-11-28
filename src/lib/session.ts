@@ -1,7 +1,15 @@
-/* A session is "<name>.<expiry>.<hmac>" signed with AUTH_SECRET.
+/* A session is "<name>.<expiry>.<version>.<hmac>" signed with AUTH_SECRET.
+   The version is the user's session_version when the cookie was made; bumping
+   it in the database ends every session made before (checked by currentUser()).
+   Cookies from before versions are "<name>.<expiry>.<hmac>" and count as version 0.
    Web Crypto only, so it runs in the proxy and in route handlers alike. */
 export const COOKIE = "bp_session";
 export const MAX_AGE = 60 * 60 * 24 * 90; // 90 days: nobody should have to log in often
+
+/** How the session cookie is set: never readable from scripts, HTTPS only when deployed. */
+export const COOKIE_OPTIONS = {
+  httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: MAX_AGE,
+} as const;
 
 const enc = new TextEncoder();
 const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
@@ -20,9 +28,10 @@ export function same(a: string, b: string) {
   return d === 0;
 }
 
-export async function makeToken(name: string) {
+export async function makeToken(name: string, version: number) {
   const exp = String(Math.floor(Date.now() / 1000) + MAX_AGE);
-  return `${name}.${exp}.${await hmac(`${name}.${exp}`)}`;
+  const body = `${name}.${exp}.${version}`;
+  return `${body}.${await hmac(body)}`;
 }
 
 /* Local development without logging in: everyone is the admin "daniel".
@@ -32,16 +41,23 @@ export async function makeToken(name: string) {
 export const DEV_NO_LOGIN =
   process.env.NODE_ENV === "development" && process.env.DEV_NO_LOGIN === "1" && !process.env.VERCEL && !process.env.DATABASE_URL;
 
-/** The logged-in name, or null. */
-export async function tokenUser(token: string | undefined): Promise<string | null> {
-  return (await checkToken(token)) ?? (DEV_NO_LOGIN ? "daniel" : null);
+export type Session = { name: string; version: number };
+
+/** A correctly signed, unexpired session, or null. This is all the proxy checks;
+    currentUser() (src/lib/auth.ts) also compares the version with the database. */
+export async function checkToken(token: string | undefined): Promise<Session | null> {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3 && parts.length !== 4) return null;
+  const sig = parts.pop()!;
+  const [name, exp, ver = "0"] = parts; // no version: a cookie from before versions
+  if (!name || !/^\d+$/.test(exp) || !/^\d+$/.test(ver) || Number(exp) < Date.now() / 1000) return null;
+  return same(sig, await hmac(parts.join("."))) ? { name, version: Number(ver) } : null;
 }
 
-async function checkToken(token: string | undefined): Promise<string | null> {
-  if (!token) return null;
-  const [name, exp, sig] = token.split(".");
-  if (!name || !exp || !sig || Number(exp) < Date.now() / 1000) return null;
-  return same(sig, await hmac(`${name}.${exp}`)) ? name : null;
+/** The proxy's check: someone is (probably) logged in. */
+export async function tokenOk(token: string | undefined) {
+  return DEV_NO_LOGIN || !!(await checkToken(token));
 }
 
 /** Only for creating the very first account: the old shared password as a one-time key. */

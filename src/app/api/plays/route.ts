@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { loggedIn, isAdmin } from "@/lib/auth";
+import { currentUser, isAdmin } from "@/lib/auth";
 import { store } from "@/lib/store";
 import { newPlayData } from "@/lib/play";
 import { dataOf } from "@/lib/schema";
 
 export async function GET() {
-  if (!(await loggedIn())) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!(await currentUser())) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   return NextResponse.json(await store().list());
 }
 

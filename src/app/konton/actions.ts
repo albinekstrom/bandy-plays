@@ -1,6 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
-import { loggedIn, isAdmin, currentUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { isAdmin, currentUser, startSession, endSession } from "@/lib/auth";
 import { usersReady, hashPassword, checkPassword, NAME_RE, MIN_PASSWORD, type Role } from "@/lib/users";
 import { MIN_TEAM_CODE } from "@/lib/teamcode";
 import { gate, LIMITS, TOO_MANY } from "@/lib/ratelimit";
@@ -22,7 +23,7 @@ export async function addUser(_prev: Result, form: FormData): Promise<Result> {
 }
 
 export async function changePassword(_prev: Result, form: FormData): Promise<Result> {
-  const me = await loggedIn();
+  const me = (await currentUser())?.name;
   if (!me) return { ok: false, msg: "Du är inte inloggad" };
   const u = await usersReady();
   const g = await gate([{ key: "pw:name:" + me, limit: LIMITS.name }]);
@@ -37,8 +38,9 @@ export async function changePassword(_prev: Result, form: FormData): Promise<Res
   const pass = String(form.get("pass") ?? ""), pass2 = String(form.get("pass2") ?? "");
   if (pass.length < MIN_PASSWORD) return { ok: false, msg: `Lösenordet ska vara minst ${MIN_PASSWORD} tecken` };
   if (pass !== pass2) return { ok: false, msg: "Lösenorden är inte lika" };
-  await u.setHash(me, await hashPassword(pass));
-  return { ok: true, msg: "Lösenordet är bytt" };
+  // ends every other session; this browser gets a fresh cookie and stays logged in
+  await startSession(me, (await u.setHash(me, await hashPassword(pass))) ?? undefined);
+  return { ok: true, msg: "Lösenordet är bytt. Du är utloggad på alla andra enheter." };
 }
 
 export async function changeTeamCode(_prev: Result, form: FormData): Promise<{ ok: boolean; msg: string; code?: string } | null> {
@@ -61,5 +63,16 @@ export async function setUserRole(form: FormData) {
   if (!all.some(x => x.name === name)) return;
   if (role === "player" && all.filter(x => x.role === "admin" && x.name !== name).length === 0) return;
   await u.setRole(name, role);
+  // a new role starts new sessions (the role itself counts at once anyway)
+  const v = await u.bump(name);
+  if (name === me.name && v != null) await startSession(name, v);
   revalidatePath("/konton");
+}
+
+/* End every session of mine, this one too. */
+export async function logoutEverywhere() {
+  const me = await currentUser();
+  if (me) await (await usersReady()).bump(me.name);
+  await endSession();
+  redirect("/login");
 }
