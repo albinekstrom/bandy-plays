@@ -11,6 +11,7 @@ interface Props {
   name: string;
   pieces: Piece[];
   steps: Step[];
+  zone?: number;
   onClose: () => void;
   showThem?: boolean;
 }
@@ -25,7 +26,7 @@ const fileName = (name: string, ext: string) =>
   (name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "").trim().slice(0, 80) || "bandyspel") + "." + ext;
 
 /** Dialog: record the play's playback as a video, then download or share it. */
-export default function VideoExport({ name, pieces, steps, onClose, showThem: themDefault = true }: Props) {
+export default function VideoExport({ name, pieces, steps, zone, onClose, showThem: themDefault = true }: Props) {
   const [state, setState] = useState<State>({ phase: "idle" });
   const [format, setFormat] = useState<Format>("16:9");
   const [speed, setSpeed] = useState(1);
@@ -60,7 +61,7 @@ export default function VideoExport({ name, pieces, steps, onClose, showThem: th
     setState({ phase: "recording", progress: 0 });
     try {
       const { blob, ext } = await exportVideo({
-        name, pieces, steps, format, speed, showText, showThem, canvas, signal: ac.signal,
+        name, pieces, steps, zone, format, speed, showText, showThem, canvas, signal: ac.signal,
         onProgress: progress => setState(s => (s.phase === "recording" ? { phase: "recording", progress } : s)),
       });
       if (ac.signal.aborted) return;

@@ -2,7 +2,7 @@
    with the 2D API (same look as the editor's SVG) and recorded in real time
    with MediaRecorder. Browser only. */
 import type { Arrow, Piece, Pos, Pt, Step } from "./types";
-import { L, W, MIDY } from "./rink";
+import { L, W, MIDY, ZONE, zoneLabel } from "./rink";
 import { arrowCurve, arrowKind, frameAt, plan, stillFrame, type Frame, type Plan } from "./play";
 import { clamp } from "./geom";
 
@@ -10,6 +10,8 @@ export interface VideoOpts {
   name: string;
   pieces: Piece[];
   steps: Step[];
+  /** Half width of the substitution zone (metres). */
+  zone?: number;
   format?: "16:9" | "9:16";
   speed?: number;
   showText?: boolean;
@@ -156,6 +158,7 @@ interface Scene {
   name: string;
   pieces: Piece[];
   steps: Step[];
+  zone: number;
   showText: boolean;
   showThem: boolean;
   side: Record<string, Piece["side"]>;
@@ -163,7 +166,7 @@ interface Scene {
   world: DOMMatrix;
 }
 
-function makeScene(ctx: CanvasRenderingContext2D, lay: Layout, f: Fonts, o: Required<Pick<VideoOpts, "name" | "pieces" | "steps" | "showText" | "showThem">>): Scene {
+function makeScene(ctx: CanvasRenderingContext2D, lay: Layout, f: Fonts, o: Required<Pick<VideoOpts, "name" | "pieces" | "steps" | "zone" | "showText" | "showThem">>): Scene {
   // the editor's viewBox, standing (attack upwards) in portrait
   const vb = lay.portrait ? { x: -3, y: -4, w: 71, h: 113 } : { x: -4, y: -3, w: 113, h: 71 };
   const r = lay.rink;
@@ -211,17 +214,18 @@ function drawRink(sc: Scene) {
   // växlingszon
   ctx.globalAlpha = 0.55;
   ctx.fillStyle = C.frost;
-  ctx.fillRect(0, MIDY - 10, L, 20);
+  const z = sc.zone;
+  ctx.fillRect(0, MIDY - z, L, z * 2);
   ctx.globalAlpha = 1;
   ctx.strokeStyle = C.isgra;
   ctx.lineWidth = 0.25;
   line(ctx, 0, MIDY, L, MIDY);
   ctx.lineWidth = 0.2;
   ctx.setLineDash([1, 1]);
-  line(ctx, 0, MIDY - 10, L, MIDY - 10);
-  line(ctx, 0, MIDY + 10, L, MIDY + 10);
+  line(ctx, 0, MIDY - z, L, MIDY - z);
+  line(ctx, 0, MIDY + z, L, MIDY + z);
   ctx.setLineDash([]);
-  rinkText(sc, 1.5, MIDY - 10.6, "VÄXLINGSZON ±10 M", 1.4, "700", C.skiffer, "left", "alphabetic");
+  rinkText(sc, 1.5, MIDY - z - 0.6, zoneLabel(z), 1.4, "700", C.skiffer, "left", "alphabetic");
   toWorld(sc);
   // red markings
   ctx.strokeStyle = C.rod;
@@ -324,7 +328,7 @@ function drawPieces(sc: Scene, pos: Record<string, Pos>, holder: string | null) 
   }
 }
 
-function drawBall(sc: Scene, b: Pt, lift = 0) {
+function drawBall(sc: Scene, b: Pt, lift = 0, arc = 0) {
   const { ctx } = sc;
   toWorld(sc);
   if (lift > 0) { // a lob: shadow on the ice, the ball above it and bigger
@@ -334,7 +338,7 @@ function drawBall(sc: Scene, b: Pt, lift = 0) {
     ctx.fill();
   }
   ctx.beginPath();
-  ctx.arc(b[0], b[1] - lift * 1.5, 0.6 * (1 + 0.8 * lift), 0, 2 * Math.PI);
+  ctx.arc(b[0], b[1] - arc, 0.6 * (1 + 0.8 * lift), 0, 2 * Math.PI);
   ctx.fillStyle = C.rosa;
   ctx.fill();
   ctx.strokeStyle = "#fff";
@@ -475,7 +479,7 @@ function drawScene(sc: Scene, k: number, frame: Frame, arrowAlpha: number) {
   drawRink(sc);
   drawArrows(sc, sc.steps[k], sc.steps[k + 1], arrowAlpha);
   drawPieces(sc, frame.pos, sc.steps[k].ball.holder);
-  drawBall(sc, frame.ball, frame.lift ?? 0);
+  drawBall(sc, frame.ball, frame.lift ?? 0, frame.arc ?? 0);
   drawHeader(sc, k);
   drawCaption(sc, k);
 }
@@ -536,7 +540,7 @@ export async function exportVideo(opts: VideoOpts): Promise<VideoResult> {
 
   const speed = opts.speed && opts.speed > 0 ? opts.speed : 1;
   const sc = makeScene(ctx, lay, f, {
-    name: opts.name, pieces: opts.pieces, steps: opts.steps,
+    name: opts.name, pieces: opts.pieces, steps: opts.steps, zone: opts.zone ?? ZONE,
     showText: opts.showText ?? true, showThem: opts.showThem ?? true,
   });
   const { segs, total } = timeline(opts.steps, speed);

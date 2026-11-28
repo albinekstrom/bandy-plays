@@ -1,7 +1,7 @@
-import { L, W, MIDY } from "@/lib/rink";
+import { L, W, MIDY, ZONE, zoneLabel } from "@/lib/rink";
 
 /* Rink markings, in metres. Same drawing as the Uppspel page. */
-export default function Rink({ portrait }: { portrait: boolean }) {
+export default function Rink({ portrait, zone = ZONE }: { portrait: boolean; zone?: number }) {
   const arcs = [
     `M0 ${MIDY - 17} A17 17 0 0 1 0 ${MIDY + 17}`,
     `M${L} ${MIDY - 17} A17 17 0 0 0 ${L} ${MIDY + 17}`,
@@ -10,16 +10,16 @@ export default function Rink({ portrait }: { portrait: boolean }) {
     "M1 0 A1 1 0 0 1 0 1", `M${L - 1} 0 A1 1 0 0 0 ${L} 1`,
     `M0 ${W - 1} A1 1 0 0 1 1 ${W}`, `M${L} ${W - 1} A1 1 0 0 0 ${L - 1} ${W}`,
   ];
-  const zx = 1.5, zy = MIDY - 10.6;
+  const zx = 1.5, zy = MIDY - zone - 0.6;
   return (
     <g>
       <rect className="mk-goal" x={-2} y={MIDY - 1.75} width={2} height={3.5} />
       <rect className="mk-goal" x={L} y={MIDY - 1.75} width={2} height={3.5} />
       <rect className="mk mk-ice" x={0} y={0} width={L} height={W} />
-      <rect className="zone" x={0} y={MIDY - 10} width={L} height={20} />
+      <rect className="zone" x={0} y={MIDY - zone} width={L} height={zone * 2} />
       <line className="lane-mid" x1={0} y1={MIDY} x2={L} y2={MIDY} />
-      {[MIDY - 10, MIDY + 10].map(y => <line key={y} className="lane" x1={0} y1={y} x2={L} y2={y} />)}
-      <text className="zone-t" x={zx} y={zy} transform={portrait ? `rotate(90 ${zx} ${zy})` : undefined}>VÄXLINGSZON ±10 M</text>
+      {[MIDY - zone, MIDY + zone].map(y => <line key={y} className="lane" x1={0} y1={y} x2={L} y2={y} />)}
+      <text className="zone-t" x={zx} y={zy} transform={portrait ? `rotate(90 ${zx} ${zy})` : undefined}>{zoneLabel(zone)}</text>
       <line className="mk" x1={L / 2} y1={0} x2={L / 2} y2={W} />
       <circle className="mk" cx={L / 2} cy={MIDY} r={5} />
       <circle className="mk-fill" cx={L / 2} cy={MIDY} r={0.3} />

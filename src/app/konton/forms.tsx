@@ -1,5 +1,6 @@
 "use client";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
+import { randomTeamCode } from "@/lib/teamcode";
 import { addUser, changePassword, changeTeamCode } from "./actions";
 
 export function AddUserForm() {
@@ -34,14 +35,30 @@ export function ChangePasswordForm() {
   );
 }
 
-export function TeamCodeForm() {
+export function TeamCodeForm({ suggestion }: { suggestion: string }) {
   const [res, action, pending] = useActionState(changeTeamCode, null);
+  const [code, setCode] = useState(suggestion);
+  const [copied, setCopied] = useState(false);
+  const saved = res?.ok ? res.code : undefined;
   return (
-    <form action={action} className="acc-form" key={res?.ok ? res.msg : "code"}>
-      <label>Ny lagkod (minst 4 tecken)<input name="code" type="password" className="field" autoComplete="off" minLength={4} required /></label>
-      <label>Ny lagkod igen<input name="code2" type="password" className="field" autoComplete="off" minLength={4} required /></label>
-      <button className="btn" type="submit" disabled={pending}>Byt lagkod</button>
+    <form action={action} className="acc-form" onSubmit={() => setCopied(false)}>
+      <label>Ny lagkod (minst 4 tecken)
+        <span className="code-row">
+          <input name="code" className="field code-field" value={code} onChange={e => setCode(e.target.value.toUpperCase())}
+            autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false} minLength={4} maxLength={40} required />
+          <button className="btn ghost" type="button" onClick={() => setCode(randomTeamCode())}>Slumpa</button>
+        </span>
+      </label>
+      <button className="btn" type="submit" disabled={pending || code.trim().length < 4}>Spara lagkoden</button>
       {res && <p className={"msg" + (res.ok ? " ok" : "")} role="status">{res.msg}</p>}
+      {saved && (
+        <p className="code-saved">
+          <b>{saved}</b>
+          <button className="btn ghost sm" type="button" onClick={async () => {
+            try { await navigator.clipboard.writeText(saved); setCopied(true); } catch { /* select it by hand */ }
+          }}>{copied ? "Kopierad" : "Kopiera"}</button>
+        </p>
+      )}
     </form>
   );
 }

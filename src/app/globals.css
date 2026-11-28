@@ -66,14 +66,29 @@ h1{margin:0;font:800 clamp(28px, 4.5vw, 40px)/1 var(--head);text-transform:upper
 .page{max-width:900px;margin:0 auto;padding:calc(20px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 32px max(16px, env(safe-area-inset-left));display:flex;flex-direction:column;gap:24px}
 .empty{color:var(--skiffer)}
 .plays{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
-.plays li{display:flex;gap:8px;align-items:stretch}
+.plays li{position:relative;display:flex;gap:8px;align-items:stretch}
 .play-link{flex:1;min-width:0;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 16px;
   background:#fff;border:2px solid var(--natt);color:var(--natt);text-decoration:none;transition:background .15s}
 .play-link:hover{background:var(--frost)}
 .play-name{font:800 24px/1.1 var(--head);text-transform:uppercase;letter-spacing:.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .play-date{font-size:13px;color:var(--skiffer);white-space:nowrap}
-.del{min-height:auto}
-.del.armed{background:var(--rod);border-color:var(--rod);color:#fff}
+.pmenu-btn{display:flex;align-items:center;justify-content:center}
+/* the ⋮ button and Taggar are the same size */
+.plays li > .btn.sm,.pmenu-btn{min-width:84px}
+.pmenu-btn svg{fill:currentColor}
+.pmenu-list{position:absolute;right:0;top:calc(100% + 4px);z-index:20;min-width:210px;display:flex;flex-direction:column;
+  background:#fff;border:2px solid var(--natt);box-shadow:0 8px 24px rgba(15,27,42,.16)}
+.pmenu-list button{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:1px;min-height:48px;padding:8px 14px;
+  border:0;background:none;color:var(--natt);text-align:left;cursor:pointer}
+.pmenu-list button+button{border-top:1px solid var(--isgra)}
+.pmenu-list button:hover:not(:disabled){background:var(--frost)}
+.pmenu-list button:focus-visible{outline:2px solid var(--rosa);outline-offset:-2px}
+.pmenu-list button:disabled{opacity:.6;cursor:default}
+.pmenu-list b{font:800 16px/1.1 var(--head);text-transform:uppercase;letter-spacing:.08em}
+.pmenu-list .danger b{color:var(--rod)}
+.pmenu-list .danger.armed{background:var(--rod)}
+.pmenu-list .danger.armed b{color:#fff}
+.pmenu-list .msg{padding:6px 14px}
 
 /* ---------- editor ---------- */
 .wrap{
@@ -184,6 +199,12 @@ h1{margin:0;font:800 clamp(28px, 4.5vw, 40px)/1 var(--head);text-transform:upper
   background:linear-gradient(rgba(245,248,250,.92),rgba(245,248,250,0));pointer-events:none}
 .v3d-top > *{pointer-events:auto}
 .v3d-top h1{font-size:clamp(22px, 4vw, 32px)}
+.v3d-top .title{min-width:0}
+.v3d-who{display:flex;align-items:center;gap:8px;margin-top:6px;min-width:0;font:800 13px var(--head);letter-spacing:.08em;text-transform:uppercase;color:var(--natt)}
+@media (max-width:700px){.v3d-who > span{display:none}.v3d-who select{flex:1 1 auto;min-width:0;max-width:100%}}
+.v3d-who select{min-height:36px;max-width:220px;padding:0 8px;border:2px solid var(--natt);border-radius:0;background:var(--is);color:var(--natt);
+  font:700 15px var(--body);letter-spacing:0;text-transform:none;cursor:pointer}
+.v3d-who select:focus-visible{outline:2px solid var(--rosa);outline-offset:2px}
 .v3d-side{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
 .v3d-env{display:flex;border:2px solid var(--natt);background:var(--is)}
 .v3d-env button{min-height:32px;padding:0 10px;border:0;border-radius:0;background:var(--is);cursor:pointer;
@@ -389,6 +410,10 @@ details.adv[open] summary{margin-bottom:6px}
 .acc-form label{display:flex;flex-direction:column;gap:4px;font-weight:600;font-size:14px;color:var(--skiffer)}
 .acc-form .btn{align-self:flex-start}
 .msg.ok{color:#1a7f45}
+.code-row{display:flex;gap:8px}
+.code-field{flex:1;min-width:0;font-family:ui-monospace,Menlo,monospace;letter-spacing:.12em}
+.code-saved{display:flex;gap:10px;align-items:center;margin:0}
+.code-saved b{font-family:ui-monospace,Menlo,monospace;font-size:22px;letter-spacing:.12em}
 a.btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
 .gate-alt{margin:0;font-size:14px;color:var(--skiffer)}
 .gate-alt a{color:var(--morkrosa);font-weight:600}
@@ -477,6 +502,9 @@ select.field{appearance:auto}
 .steps-bar .dots button.done{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.5);color:#fff}
 .steps-bar .dots button.cur{background:var(--rosa);border-color:var(--rosa);color:#fff}
 .steps-bar .dots button:focus-visible{outline:2px solid #fff;outline-offset:2px}
+/* a pass between two steps: a smaller pink ball (a lob gets a white ring) */
+.steps-bar .dots .pass-dot{flex:none;width:16px;height:16px;align-self:center;border-radius:50%;background:var(--rosa);margin:0 -2px}
+.steps-bar .dots .pass-dot.lob{box-shadow:0 0 0 2px var(--natt),0 0 0 3px #fff}
 
 /* wide landscape screens: rink as large as possible, controls in a column on the right, steps along the bottom */
 @media (min-width:820px) and (orientation:landscape){

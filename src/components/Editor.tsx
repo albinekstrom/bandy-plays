@@ -7,12 +7,12 @@ import { useRouter } from "next/navigation";
 import { onFlush } from "@/lib/unsaved";
 import { dataOf } from "@/lib/schema";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Arrow, ArrowKind, Play, PlayData, Pt, Step } from "@/lib/types";
-import { L, W, MIDY, NAMES } from "@/lib/rink";
+import { L, W, MIDY, NAMES, ZONE_MIN, ZONE_MAX, zoneOf } from "@/lib/rink";
 import { clamp, dist, fitStroke, heading, pathD, spline } from "@/lib/geom";
 import {
-  arrowCurve, arrowKind, ballPoint, endState, holderRun, passOrigin, runHandles, frameAt, movePiece, nearestPiece, placeFromStart, plan, runEndDir, skatedBefore, stepAfter, stillFrame, uid, type Frame,
+  arrowCurve, arrowKind, ballPoint, endState, holderRun, lobArc, passOrigin, runHandles, frameAt, movePiece, nearestPiece, placeFromStart, plan, runEndDir, skatedBefore, stepAfter, stillFrame, uid, type Frame,
 } from "@/lib/play";
 import { choicesAt, everyStep, lineName, lineSteps, ownFrom, receiverAt, writeLine, type Line } from "@/lib/lines";
 import { laneStatus, type Lane } from "@/lib/lanes";
@@ -31,8 +31,8 @@ type Mode = "play" | "edit";
 const TOOLS: { id: Tool; label: string; hint: string }[] = [
   { id: "move", label: "Flytta", hint: "Dra en spelare. Bollen följer bollföraren och flyttas bara med Pass." },
   { id: "run", label: "Åkning", hint: "Dra från en spelare dit hen ska åka. Bollföraren driver bollen (rosa linje). Dra i punkten på linjen för att böja den." },
-  { id: "pass", label: "Pass", hint: "Dra från bollen till en medspelare. Passet går i rak linje längs isen." },
-  { id: "lob", label: "Lyra", hint: "Dra från bollen till en medspelare. Bollen lyfts i rak linje över spelarna." },
+  { id: "pass", label: "Pass", hint: "Dra från bollen till en medspelare. Passet går i rak linje längs isen, efter stegets åkningar." },
+  { id: "lob", label: "Lyra", hint: "Dra från bollen till en medspelare. Bollen lyfts i en båge över spelarna, efter stegets åkningar." },
   { id: "dir", label: "Riktning", hint: "Dra från en spelare åt det håll hen ska titta." },
   { id: "erase", label: "Sudda", hint: "Tryck på en pil eller en motståndare för att ta bort den." },
 ];
@@ -42,7 +42,7 @@ type Drag =
   | { kind: "piece"; id: string }
   | { kind: "dir"; id: string }
   | { kind: "bend"; arrow: string; piece: string; index: number; handles: Pt[] }
-  | { kind: "stroke"; arrow: ArrowKind; piece: string | null; pts: Pt[]; after?: boolean; lob?: boolean };
+  | { kind: "stroke"; arrow: ArrowKind; piece: string | null; pts: Pt[]; lob?: boolean };
 
 type Save = "saved" | "saving" | "dirty" | "error" | "conflict";
 type PlayOpts = { line?: Line; skipAsk?: number; onDone?: () => void };
@@ -445,7 +445,6 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     if (playing) return;
     const p = toWorld(e);
     const pos = step.pos;
-    const ball = ballPoint(step.ball, pos);
     let d: Drag | null = null;
 
     const hi = handles.findIndex(h => dist(p, h) < 1.4);
@@ -469,13 +468,11 @@ export default function Editor({ initial, readOnly = false, shared = false, role
       const id = nearestPiece(visible, pos, p, REACH);
       if (id) d = { kind: "stroke", arrow: id === step.ball.holder ? "drib" : "run", piece: id, pts: [[pos[id].x, pos[id].y]] };
     } else if (tool === "pass" || tool === "lob") {
-      // if players skate in this step, the pass comes after: from where the ball ends up, as an in-between step
-      const after = step.arrows.some(a => a.kind !== "pass");
-      const at = after ? stepEnd.pos : pos;
+      // a pass is its own phase after the step's runs: from where the ball is when they are done
       const holder = step.ball.holder;
-      const from = after ? ballPoint({ ...stepEnd.ball, holder }, stepEnd.pos) : ball;
-      const holderNear = holder && nearestPiece(visible, at, p, REACH) === holder;
-      if (dist(p, from) < REACH || holderNear) d = { kind: "stroke", arrow: "pass", piece: null, pts: [from], after, lob: tool === "lob" };
+      const from = ballPoint({ ...stepEnd.ball, holder }, stepEnd.pos);
+      const holderNear = holder && nearestPiece(visible, stepEnd.pos, p, REACH) === holder;
+      if (dist(p, from) < REACH || holderNear) d = { kind: "stroke", arrow: "pass", piece: null, pts: [from], lob: tool === "lob" };
     } else if (tool === "dir") {
       const id = nearestPiece(visible, pos, p, REACH);
       if (id) d = { kind: "dir", id };
@@ -556,8 +553,8 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     const curve = spline(way);
     const end = way[way.length - 1];
     const endDir = Math.round(heading(curve[Math.max(0, curve.length - 3)], end));
-    commitLine(cur => {
-      // steps are only made with "+ Steg"; an arrow in the last step waits for it
+    commitLine((cur, doc) => {
+      // runs in the last step wait for "+ Steg"; a pass makes the step it lands in
       let s = cur.slice();
       const arrow: Arrow = { id: uid(), kind: d.arrow, piece: d.piece, pts: way, ...(d.lob ? { lob: true } : {}) };
       // one movement per player (and one pass) per step: a new stroke replaces the old
@@ -565,12 +562,13 @@ export default function Editor({ initial, readOnly = false, shared = false, role
       s[kk] = { ...s[kk], arrows: [...keep, arrow] };
 
       if (d.arrow === "pass") {
-        // after the runs of this step, the ball goes from where it ended up
-        if (d.after) s[kk] = { ...s[kk], passAt: 1 };
-        if (s[kk + 1]) s[kk + 1] = { ...s[kk + 1], ball: { holder: rec, x: end[0], y: end[1] } };
-        if (s[kk].ball.holder && !d.after) {
+        // the pass is an in-between phase: after the runs of this step, then the next step starts
+        if (!s[kk + 1]) s.splice(kk + 1, 0, stepAfter(s, kk, doc.pieces));
+        s[kk + 1] = { ...s[kk + 1], ball: { holder: rec, x: end[0], y: end[1] } };
+        const passer = s[kk].ball.holder;
+        if (passer && !s[kk].arrows.some(a => a.kind !== "pass" && a.piece === passer)) {
           // a passer standing still faces the pass
-          s = movePiece(s, kk, s[kk].ball.holder, { dir: endDir });
+          s = movePiece(s, kk, passer, { dir: endDir });
         }
       } else if (d.piece) {
         if (s[kk + 1]) s = movePiece(s, kk + 1, d.piece, { x: end[0], y: end[1], dir: endDir }, true);
@@ -643,8 +641,6 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     commitLine((s, d) => autoPlace(s, d.pieces, autoOpts));
     setMore(false);
   };
-  const passRuns = !!step.ball.holder && step.arrows.some(a => a.kind === "pass") && step.arrows.some(a => a.kind !== "pass" && a.piece === step.ball.holder);
-  const setPassAt = (v: number) => setSteps(s => s.map((x, i) => (i === kk ? { ...x, passAt: v } : x)));
   const setNote = (id: string, text: string) =>
     setSteps(s => s.map((x, i) => (i === kk ? { ...x, notes: { ...x.notes, [id]: text.slice(0, 120) } } : x)));
 
@@ -864,7 +860,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
             ))}
           </defs>
           <g ref={worldRef} transform={portrait ? `matrix(0 -1 1 0 0 ${L})` : undefined}>
-            <Rink portrait={portrait} />
+            <Rink portrait={portrait} zone={zoneOf(data)} />
 
             {mode === "play" && !quiz && viewer && frame.pos[viewer] && (() => {
               // what he sees: clear in front (±55°), out of the corner of the eye (±100°)
@@ -907,7 +903,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
                 {draft?.kind === "stroke" && draft.pts.length > 1 && (() => {
                   // show the raw finger trace faintly and what it snaps to
                   const way = draft.arrow === "pass" ? [draft.pts[0], draft.pts[draft.pts.length - 1]] : fitStroke(draft.pts);
-                  const snapped = spline(way);
+                  const snapped = draft.lob ? lobArc(way[0], way[1]) : spline(way);
                   return (
                     <>
                       <path d={pathD(draft.pts)} className="arrow trace" />
@@ -935,7 +931,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
               })}
             </g>
             {!!frame.lift && <circle className="ball-shadow" cx={frame.ball[0]} cy={frame.ball[1]} r={0.5} />}
-            <circle className="ball" cx={frame.ball[0]} cy={frame.ball[1] - (frame.lift ?? 0) * 1.5} r={0.6 * (1 + 0.8 * (frame.lift ?? 0))} />
+            <circle className="ball" cx={frame.ball[0]} cy={frame.ball[1] - (frame.arc ?? 0)} r={0.6 * (1 + 0.8 * (frame.lift ?? 0))} />
             {ghostBall && !hideArrows && <circle className="ball ghost" cx={ghostBall[0]} cy={ghostBall[1]} r={0.6} />}
             {!hideArrows && handles.map((h, i) => <circle key={i} className="bend" cx={h[0]} cy={h[1]} r={0.7} />)}
           </g>
@@ -1067,6 +1063,15 @@ export default function Editor({ initial, readOnly = false, shared = false, role
                   <span className="more-note">Helskärm för tv/projektor, styrs med tangentbord, klickare eller mobilen.</span>
                 </div>
               )}
+              {mode === "edit" && (
+                <div className="more-row">
+                  <span className="more-lbl">Växlingszon</span>
+                  <input type="range" min={ZONE_MIN} max={ZONE_MAX} step={0.5} value={zoneOf(data)} disabled={playing}
+                    onPointerDown={snapshot} onKeyDown={snapshot} onChange={e => setData(d => ({ ...d, zone: Number(e.target.value) }))}
+                    aria-label="Växlingszonens bredd från mittlinjen" />
+                  <span className="more-note">±{String(zoneOf(data)).replace(".", ",")} m från mittlinjen</span>
+                </div>
+              )}
               <div className="more-row">
                 <button className="tg" type="button" aria-pressed={showThem} onClick={() => setShowThem(v => !v)}>Visa motståndare</button>
                 {mode === "edit" && <button className="tg" type="button" onClick={addOpponent} disabled={playing}>+ Motståndare</button>}
@@ -1079,14 +1084,6 @@ export default function Editor({ initial, readOnly = false, shared = false, role
                   <button className="btn" type="button" onClick={runAuto} disabled={playing || steps.length < 2 || (!autoOpts.us && !autoOpts.them)}>Placera övriga automatiskt</button>
                 </div>
                 <p className="more-note">Spelare utan egna pilar följer bollen i alla steg. Går att ångra och justera för hand.</p>
-                {passRuns && (
-                  <div className="more-row">
-                    <span className="more-lbl">Passet går</span>
-                    <span className="more-note">direkt</span>
-                    <input type="range" min={0} max={100} step={5} value={Math.round((step.passAt ?? 1) * 100)} onPointerDown={snapshot} onChange={e => setPassAt(Number(e.target.value) / 100)} aria-label="När passet går under passarens åkning" />
-                    <span className="more-note">när han åkt klart</span>
-                  </div>
-                )}
               </>}
             </div>
           )}
@@ -1096,11 +1093,19 @@ export default function Editor({ initial, readOnly = false, shared = false, role
       <nav className="steps-bar" aria-label="Steg">
         <span className="steps-lbl">Steg</span>
         <div className="dots">
-          {steps.map((s, i) => (
-            <button key={s.id} type="button" className={i === (anim ? anim.from : kk) ? "cur" : i < kk ? "done" : ""} onClick={() => { stop(); setK(i); }} aria-label={`Steg ${i + 1}`} aria-current={i === kk ? "step" : undefined} disabled={!!quiz}>
-              {i + 1}
-            </button>
-          ))}
+          {steps.map((s, i) => {
+            const pass = s.arrows.find(a => a.kind === "pass");
+            return (
+              <Fragment key={s.id}>
+                <button type="button" className={i === (anim ? anim.from : kk) ? "cur" : i < kk ? "done" : ""} onClick={() => { stop(); setK(i); }} aria-label={`Steg ${i + 1}${pass ? `, sedan ${pass.lob ? "lyra" : "passning"}` : ""}`} aria-current={i === kk ? "step" : undefined} disabled={!!quiz}>
+                  {i + 1}
+                </button>
+                {/* the pass is an in-between step: a small pink ball between the steps (a marker only;
+                    the step's own button says it) */}
+                {pass && <span className={"pass-dot" + (pass.lob ? " lob" : "")} aria-hidden="true" title={pass.lob ? "Lyra" : "Passning"} />}
+              </Fragment>
+            );
+          })}
         </div>
       </nav>
 
@@ -1122,7 +1127,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
         </div>
       )}
 
-      {video && <VideoExport name={name} pieces={data.pieces} steps={steps} showThem={showThem} onClose={() => setVideo(false)} />}
+      {video && <VideoExport name={name} pieces={data.pieces} steps={steps} zone={zoneOf(data)} showThem={showThem} onClose={() => setVideo(false)} />}
 
       {show3d && viewer && pieceById[viewer] && (
         <View3D
@@ -1134,6 +1139,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
           steps={steps}
           speed={speed}
           onStep={i => setK(clamp(i, 0, steps.length - 1))}
+          onViewer={setViewer}
           onClose={() => setShow3d(false)}
         />
       )}

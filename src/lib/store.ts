@@ -10,7 +10,8 @@ import { upgrade } from "./schema";
 export interface PlayStore {
   list(): Promise<PlaySummary[]>;
   get(id: string): Promise<Play | null>;
-  create(name: string, data: PlayData): Promise<Play>;
+  /** One write: the play and its tags (a duplicate carries its original's tags). */
+  create(name: string, data: PlayData, tags?: string[]): Promise<Play>;
   /** rev: the revision the edit builds on; if the play was saved since, nothing is written ("conflict"). */
   update(id: string, name: string, data: PlayData, rev?: number): Promise<Play | null | "conflict">;
   remove(id: string): Promise<void>;
@@ -36,10 +37,10 @@ const fileStore: PlayStore = {
     const p = (await readAll()).find(x => x.id === id);
     return p ? { ...p, ...upgrade(p) } : null;
   },
-  async create(name, data) {
+  async create(name, data, tags = []) {
     return locked(FILE, async () => {
       const plays = await readAll();
-      const play: Play = { id: crypto.randomUUID(), name, updatedAt: new Date().toISOString(), ...data };
+      const play: Play = { id: crypto.randomUUID(), name, updatedAt: new Date().toISOString(), ...data, tags };
       plays.push(play);
       await writeAll(plays);
       return play;
@@ -120,10 +121,10 @@ function neonStore(url: string): PlayStore {
       const rows = (await sql`SELECT * FROM plays WHERE id = ${id}`) as Row[];
       return rows[0] ? toPlay(rows[0]) : null;
     },
-    async create(name, data) {
+    async create(name, data, tags = []) {
       await init();
       const rows = (await sql`
-        INSERT INTO plays (id, name, data) VALUES (${crypto.randomUUID()}, ${name}, ${JSON.stringify(data)}::jsonb)
+        INSERT INTO plays (id, name, data, tags) VALUES (${crypto.randomUUID()}, ${name}, ${JSON.stringify(data)}::jsonb, ${tags}::text[])
         RETURNING *`) as Row[];
       return toPlay(rows[0]);
     },

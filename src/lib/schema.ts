@@ -8,14 +8,18 @@
    - migrations are pure and additive: add fields or fill defaults, never delete data;
    - data stored in the database is only rewritten when someone saves the play. */
 import type { PlayData } from "./types";
+import { ZONE_MIN, ZONE_MAX } from "./rink";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 type Data = PlayData & Record<string, unknown> & { v?: number };
 
 const MIGRATIONS: Record<number, (d: Data) => Data> = {
   // 0 → 1: plays from before versions existed. The format is the same; only stamped.
   0: d => d,
+  // 1 → 2: optional `zone` (half width of the växlingszon). Plays without it use the
+  // default (rink.ts), so nothing is filled in here.
+  1: d => d,
 };
 
 /** The play's data in the current format. Plays from a newer version are left as they are. */
@@ -79,5 +83,6 @@ export function parsePlayData(v: unknown): (PlayData & O) | null {
   const variantOk = (x: unknown) => isObj(x) && isId(x.id) && isStr(x.name, 100) &&
     Number.isInteger(x.from) && (x.from as number) >= 0 && (x.from as number) < n && list(x.steps, 200, isStep, 1);
   if (!opt(v.variants, x => list(x, 20, variantOk))) return null;
+  if (!opt(v.zone, z => isNum(z) && (z as number) >= ZONE_MIN && (z as number) <= ZONE_MAX)) return null;
   return withDefaults(v) as PlayData & O;
 }

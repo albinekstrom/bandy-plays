@@ -8,7 +8,7 @@ export default function RegisterForm() {
     <form action={action} className="gate-form">
       <p className="gate-note">Lagkoden får du av tränaren.</p>
       <label htmlFor="code">Lagkod</label>
-      <input id="code" name="code" type="password" className="field" autoComplete="off" required autoFocus />
+      <input id="code" name="code" className="field" autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false} required autoFocus />
       <label htmlFor="name">Namn</label>
       <input id="name" name="name" className="field field-name" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} pattern="[A-Za-zÅÄÖåäö]{2,20}" required />
       <label htmlFor="pass">Lösenord (minst 8 tecken)</label>

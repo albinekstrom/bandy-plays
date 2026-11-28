@@ -157,7 +157,7 @@ interface Player {
   chest: THREE.Vector3;
 }
 
-export default function View3D({ pieces, step, steps, speed = 1, viewer, k, count, onStep, onClose }: {
+export default function View3D({ pieces, step, steps, speed = 1, viewer, k, count, onStep, onViewer, onClose }: {
   pieces: Piece[];
   step: Step;
   /** The line of steps being viewed (step === steps[k]); playback needs at least two. */
@@ -168,6 +168,8 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
   k: number;
   count: number;
   onStep: (k: number) => void;
+  /** Switch whose eyes we see through (any player on the ice); hidden when not given. */
+  onViewer?: (id: string) => void;
   onClose: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -178,14 +180,20 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
   const [hud, setHud] = useState<Hud>({ edges: [], hidden: 0, partial: 0 });
   const line = useMemo(() => steps ?? [step], [steps, step]);
   const me = pieces.find(p => p.id === viewer);
-  const myName = me ? (me.label ? NAMES[me.label] ?? me.label : "Motståndare") : "";
+  // everyone on the ice in this step: our players by position, opponents numbered
+  const onIce = pieces.filter(p => step.pos[p.id]);
+  const ours = onIce.filter(p => p.side === "us");
+  const theirs = onIce.filter(p => p.side === "them");
+  const nameOf = (p: Piece, i: number) => (p.label ? NAMES[p.label] ?? p.label : `Motståndare ${i + 1}`);
+  const myName = me ? nameOf(me, Math.max(0, theirs.indexOf(me))) : "";
 
   // shared with the render loop, which outlives renders
   const poseRef = useRef<Pose>(stillPose(step));
   const camRef = useRef<CamMode>("eyes");
   const lookRef = useRef({ yaw: 0, pitch: 0 }); // drag offset on top of the camera's own aim
   const playRef = useRef<Playback | null>(null);
-  const sceneRef = useRef<{ apply: () => void; camChanged: () => void } | null>(null);
+  const sceneRef = useRef<{ apply: () => void; camChanged: () => void; setViewer: (id: string) => void } | null>(null);
+  const viewerRef = useRef(viewer);
   const live = useRef({ steps: line, onStep, speed });
   useEffect(() => { live.current = { steps: line, onStep, speed }; });
 
@@ -202,21 +210,34 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
     const spot = SPOTS[envId] ?? SPOTS.hall;
     buildRink(scene);
 
-    /* ---------- players, labels, rings, ball: built once, moved every frame ---------- */
-    const mySide = pieces.find(p => p.id === viewer)?.side ?? "us";
+    /* ---------- players and ball: built once, moved every frame ---------- */
     const players: Player[] = pieces.map((pc, i) => {
-      const us = pc.side === "us";
-      const sk = buildSkater(us ? KIT_US : KIT_THEM, { phase: (i * 2.399) % (Math.PI * 2), holder: false });
+      const sk = buildSkater(pc.side === "us" ? KIT_US : KIT_THEM, { phase: (i * 2.399) % (Math.PI * 2), holder: false });
       scene.add(sk.root);
-      const self = pc.id === viewer, tag = pc.label || "M";
-      const mate = !self && pc.side === mySide;
-      const label = self ? textSprite(tag, "#E6007E") : mate ? textSprite(tag, us ? "#0057A8" : "#6B7785") : null;
-      const rings = mate ? [ringSprite("#E6007E", true), ringSprite("#FFC20E", false)] as [THREE.Sprite, THREE.Sprite] : null;
-      if (label) scene.add(label);
-      if (rings) scene.add(...rings);
-      return { id: pc.id, sk, t: 0, moved: false, self, tag, label, rings, chest: new THREE.Vector3() };
+      return { id: pc.id, sk, t: 0, moved: false, self: false, tag: pc.label || "M", label: null, rings: null, chest: new THREE.Vector3() };
     });
-    const mates = players.filter(p => p.rings);
+    let mates: Player[] = [];
+    const drop = (s: THREE.Sprite | null) => { if (s) { scene.remove(s); s.material.map?.dispose(); s.material.dispose(); } };
+    /* Whose eyes we see through: only his label, his teammates' labels and rings change,
+       so switching viewer keeps the renderer, environment and skaters. */
+    const setViewer = (id: string) => {
+      viewerRef.current = id;
+      const mySide = pieces.find(p => p.id === id)?.side ?? "us";
+      for (const p of players) {
+        drop(p.label);
+        p.rings?.forEach(drop);
+        const side = pieces.find(x => x.id === p.id)!.side;
+        p.self = p.id === id;
+        const mate = !p.self && side === mySide;
+        p.label = p.self ? textSprite(p.tag, "#E6007E") : mate ? textSprite(p.tag, side === "us" ? "#0057A8" : "#6B7785") : null;
+        p.rings = mate ? [ringSprite("#E6007E", true), ringSprite("#FFC20E", false)] : null;
+        if (p.label) scene.add(p.label);
+        if (p.rings) scene.add(...p.rings);
+      }
+      mates = players.filter(p => p.rings);
+      snap = true;
+      apply();
+    };
     const ball = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 12), new THREE.MeshStandardMaterial({ color: C.ball, emissive: 0x550030, roughness: 0.4 }));
     scene.add(ball);
 
@@ -242,7 +263,7 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
       }
       ball.position.set(pose.ball[0], 0.08 + (pose.lift ?? 0) * 3, pose.ball[1]); // a lob flies up to ~3 m
       // rings for teammates hidden behind someone: only from his eyes
-      sight = eyes ? sightlines(pieces, pose.pos, viewer) : null;
+      sight = eyes ? sightlines(pieces, pose.pos, viewerRef.current) : null;
       for (const p of mates) {
         const st = sight?.[p.id];
         p.rings![0].visible = st === "hidden";
@@ -315,7 +336,7 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
       fx += (pose.ball[0] - fx) * a;
       fz += (pose.ball[1] - fz) * a;
       if (mode === "eyes") {
-        const q = pose.pos[viewer];
+        const q = pose.pos[viewerRef.current];
         if (q) from.set(q.x, EYE, q.y);
         const yaw = (q ? q.dir * DEG : 0) + off.yaw, pitch = clamp(-0.12 + off.pitch, -1.2, 0.6);
         look.set(Math.cos(yaw) * Math.cos(pitch), Math.sin(pitch), Math.sin(yaw) * Math.cos(pitch));
@@ -448,9 +469,10 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
     };
     // a pending hud update still has to land when nothing else moves
     const hudTimer = setInterval(() => { if (hudDirty) dirty = true; }, 120);
+    setViewer(viewerRef.current);
     camChanged();
     raf = requestAnimationFrame(frame);
-    sceneRef.current = { apply, camChanged };
+    sceneRef.current = { apply, camChanged, setViewer };
 
     /* ---------- drag: turn the head, or swing the camera ---------- */
     let drag: { x: number; y: number; yaw: number; pitch: number } | null = null;
@@ -504,7 +526,11 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
       renderer.dispose();
       el.remove();
     };
-  }, [pieces, viewer, envId]);
+  }, [pieces, envId]); // not viewer: switching perspective updates the scene in place (below)
+
+  useEffect(() => {
+    if (viewerRef.current !== viewer) sceneRef.current?.setViewer(viewer);
+  }, [viewer]);
 
   // a new step from outside (arrows, the editor): jump there, unless we are playing into it
   useEffect(() => {
@@ -572,6 +598,21 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
         <div className="title">
           <span className="kicker">Steg {k + 1}/{count}{step.text ? " · " + step.text : ""}</span>
           <h1>{eyes ? "Ser som" : "Följer"} {myName}</h1>
+          {onViewer && (
+            <label className="v3d-who">
+              <span>Byt perspektiv</span>
+              <select value={viewer} onChange={e => onViewer(e.target.value)}>
+                <optgroup label="Vårt lag">
+                  {ours.map((p, i) => <option key={p.id} value={p.id}>{p.label ? `${p.label} · ${nameOf(p, i)}` : nameOf(p, i)}</option>)}
+                </optgroup>
+                {theirs.length > 0 && (
+                  <optgroup label="Motståndare">
+                    {theirs.map((p, i) => <option key={p.id} value={p.id}>{nameOf(p, i)}</option>)}
+                  </optgroup>
+                )}
+              </select>
+            </label>
+          )}
         </div>
         <div className="v3d-side">
           <button className="btn" type="button" onClick={onClose}>Stäng</button>

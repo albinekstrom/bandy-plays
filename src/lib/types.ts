@@ -63,6 +63,8 @@ export interface PlayData {
   pieces: Piece[];
   steps: Step[];
   variants?: Variant[];
+  /** Half width of the substitution zone in metres (växlingszon ±zone), default ZONE in rink.ts. */
+  zone?: number;
 }
 
 export interface Play extends PlayData {
