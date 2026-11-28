@@ -567,7 +567,7 @@ export async function exportVideo(opts: VideoOpts): Promise<VideoResult> {
 
   return new Promise<VideoResult>((resolve, reject) => {
     const chunks: Blob[] = [];
-    let raf = 0, done = false, aborted = false, start = 0, lastReport = -1;
+    let raf = 0, done = false, aborted = false, start = 0, lastReport = -1, lastFrame = -1;
 
     const cleanup = () => {
       cancelAnimationFrame(raf);
@@ -606,7 +606,11 @@ export async function exportVideo(opts: VideoOpts): Promise<VideoResult> {
       if (done || aborted) return;
       if (!start) start = now;
       const t = (now - start) / 1000;
-      drawAt(sc, segs, Math.min(t, total));
+      const frame = Math.floor(t * FPS);
+      if (frame !== lastFrame) {
+        drawAt(sc, segs, Math.min(t, total));
+        lastFrame = frame;
+      }
       const p = Math.min(1, t / total);
       if (p - lastReport >= 0.005) { lastReport = p; opts.onProgress?.(p); }
       if (t >= total + 0.15) { rec.stop(); return; } // a few extra frames so the last one is kept

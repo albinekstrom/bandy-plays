@@ -23,13 +23,13 @@ export default function PlayList({ plays, canEdit = false }: { plays: Item[]; ca
     return [...m].sort((a, b) => a[1].localeCompare(b[1], "sv"));
   }, [plays, over]);
 
+  const activeSel = sel.filter(s => inUse.some(([k]) => k === s));
   const needle = lc(q.trim());
   const shown = plays.filter(p => {
     if (needle && !lc(p.name).includes(needle)) return false;
     const mine = tagsOf(p).map(lc);
-    return sel.every(s => mine.includes(s));
+    return activeSel.every(s => mine.includes(s));
   });
-  const activeSel = sel.filter(s => inUse.some(([k]) => k === s));
 
   async function save(id: string, next: string[]) {
     const prev = over[id];

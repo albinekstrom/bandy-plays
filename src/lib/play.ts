@@ -2,7 +2,7 @@
    Shared by the editor (client) and the server. */
 import type { Arrow, ArrowKind, Ball, Piece, PlayData, Pos, Pt, Step } from "./types";
 import { US_START, THEM_START } from "./rink";
-import { along, clamp, curvePts, spline, dist, ease, heading, lerp, lerpAngle, polyLength } from "./geom";
+import { along, clamp, curvePts, spline, dist, ease, heading, lerp, lerpAngle, measurePath, samplePath, polyLength } from "./geom";
 
 export const uid = () =>
   globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -123,14 +123,14 @@ export function runHandles(a: Arrow, step: Step, next: Step | undefined): Pt[] {
 /** The ball holder's run in a step, if he skates (dribbles). */
 export const holderRun = (step: Step) => (step.ball.holder ? moveArrow(step, step.ball.holder) : undefined);
 
-interface Mover { path: Pt[]; len: number; dur: number; startDir: number; endDir: number }
+interface Mover { path: ReturnType<typeof measurePath>; dur: number; startDir: number; endDir: number }
 export interface Plan {
   a: Step;
   b: Step;
   T: number;
   movers: Record<string, Mover>;
-  /** path: along the ice (straight) for timing and 3D; a lob's drawn arc is lobArc(path ends). */
-  pass: { path: Pt[]; start: number; flight: number; lob: boolean } | null;
+  /** Straight segment on the ice. The lob height is applied separately. */
+  pass: { path: [Pt, Pt]; start: number; flight: number; lob: boolean; height: number } | null;
 }
 
 /* Passes are their own phase after every run in the step (a deliberate change from the older
@@ -138,15 +138,16 @@ export interface Plan {
    field, but it no longer affects playback). */
 export function plan(a: Step, b: Step): Plan {
   const movers: Record<string, Mover> = {};
-  let T = 0.8;
+  let T = 0.8, lastSkate = 0;
   for (const id of Object.keys(a.pos)) {
     const p = a.pos[id], q = b.pos[id] ?? p;
     const arrow = moveArrow(a, id);
     const moved = dist([p.x, p.y], [q.x, q.y]) > 0.05;
     const path = arrow ? arrowCurve(arrow, a, b) : moved ? curvePts([p.x, p.y], [q.x, q.y], null) : [[p.x, p.y] as Pt];
-    const len = polyLength(path);
-    const dur = len / SKATE;
-    movers[id] = { path, len, dur, startDir: p.dir, endDir: q.dir };
+    const measured = measurePath(path);
+    const dur = measured.length / SKATE;
+    lastSkate = Math.max(lastSkate, dur);
+    movers[id] = { path: measured, dur, startDir: p.dir, endDir: q.dir };
     T = Math.max(T, dur + TURN);
   }
   let pass: Plan["pass"] = null;
@@ -154,31 +155,34 @@ export function plan(a: Step, b: Step): Plan {
   if (arrow) {
     // the pass is its own phase: it leaves once everyone has skated, from in front of the passer
     // wherever his movement (drawn run or not) has taken him by then
-    const start = Math.max(0, ...Object.values(movers).map(m => m.dur));
+    const start = lastSkate;
     const passer = a.ball.holder;
     const from = passer && movers[passer] ? carried(moverAt(movers[passer], start)) : ballPoint(a.ball, a.pos);
-    const path = curvePts(from, ballPoint(b.ball, b.pos), null);
+    const to = ballPoint(b.ball, b.pos);
+    const path: [Pt, Pt] = [from, to];
     const lob = !!arrow.lob;
-    const flight = Math.max(0.25, polyLength(path) / (lob ? LOB_SPEED : BALL_SPEED));
-    pass = { path, start, flight, lob };
+    const length = dist(from, to);
+    const flight = Math.max(0.25, length / (lob ? LOB_SPEED : BALL_SPEED));
+    pass = { path, start, flight, lob, height: lob ? lobHeight(length) : 0 };
     T = Math.max(T, start + flight + 0.2);
   }
   return { a, b, T, movers, pass };
 }
 
 function moverAt(m: Mover, t: number): Pos {
-  if (m.len < 0.05) {
-    const [x, y] = m.path[0];
+  const { points, length } = m.path;
+  if (length < 0.05) {
+    const [x, y] = points[0];
     return { x, y, dir: lerpAngle(m.startDir, m.endDir, clamp(t / TURN, 0, 1)) };
   }
   const u = ease(clamp(t / m.dur, 0, 1));
-  const [x, y] = along(m.path, u);
-  const n = m.path.length;
+  const [x, y] = samplePath(m.path, u);
+  const n = points.length;
   if (t < m.dur) {
-    const tan = heading(along(m.path, Math.max(0, u - 0.02)), along(m.path, Math.min(1, u + 0.02)));
+    const tan = heading(samplePath(m.path, Math.max(0, u - 0.02)), samplePath(m.path, Math.min(1, u + 0.02)));
     return { x, y, dir: lerpAngle(m.startDir, tan, clamp(t / TURN, 0, 1)) };
   }
-  const endTan = heading(m.path[n - 2], m.path[n - 1]);
+  const endTan = heading(points[n - 2], points[n - 1]);
   return { x, y, dir: lerpAngle(endTan, m.endDir, clamp((t - m.dur) / TURN, 0, 1)) };
 }
 
@@ -194,13 +198,14 @@ export function frameAt(pl: Plan, t: number): Frame {
     if (t < pass.start) ball = passer && pos[passer] ? carried(pos[passer]) : ballPoint(a.ball, a.pos);
     else if (t < pass.start + pass.flight) {
       const u = (t - pass.start) / pass.flight;
-      ball = along(pass.path, u);
+      const [from, to] = pass.path;
+      ball = [lerp(from[0], to[0], u), lerp(from[1], to[1], u)];
       if (pass.lob) { // up and down again over the players, drawn along the arc
         lift = Math.sin(Math.PI * u);
-        arc = lift * lobHeight(polyLength(pass.path));
+        arc = lift * pass.height;
       }
     }
-    else ball = rec && pos[rec] ? carried(pos[rec]) : pass.path[pass.path.length - 1];
+    else ball = rec && pos[rec] ? carried(pos[rec]) : pass.path[1];
   } else if (a.ball.holder && a.ball.holder === b.ball.holder && pos[a.ball.holder]) {
     ball = carried(pos[a.ball.holder]);
   } else {

@@ -1,6 +1,7 @@
 "use client";
 /* The coach's phone as a remote for a presentation screen. */
 import Link from "next/link";
+import { pollWhileVisible } from "@/lib/poll";
 import { useEffect, useState } from "react";
 
 export interface ScreenState {
@@ -18,28 +19,32 @@ export default function RemoteControl({ code }: { code: string }) {
   const [lost, setLost] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    let alive = true;
-    const poll = async () => {
-      try {
-        const res = await fetch(`/api/fjarr/${code}`, { cache: "no-store" });
-        if (!alive) return;
-        if (res.status === 404) { setLost(true); return; }
-        const r = await res.json();
-        setLost(false);
-        if (r.state) setState(r.state as ScreenState);
-      } catch { /* try again next tick */ }
-    };
-    poll();
-    const t = setInterval(poll, 800);
-    return () => { alive = false; clearInterval(t); };
-  }, [code]);
+  const [error, setError] = useState(false);
+
+  useEffect(() => pollWhileVisible(async signal => {
+    const res = await fetch(`/api/fjarr/${code}`, { cache: "no-store", signal });
+    if (res.status === 404 || res.status === 401) { setLost(true); return; }
+    if (!res.ok) return;
+    const r = await res.json();
+    if (signal.aborted) return;
+    setLost(false);
+    if (r.state) setState(r.state as ScreenState);
+  }, 800), [code]);
 
   async function send(cmd: string) {
     setBusy(true);
-    try { await fetch(`/api/fjarr/${code}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cmd }) }); }
-    finally { setBusy(false); }
-    navigator.vibrate?.(15);
+    setError(false);
+    try {
+      const res = await fetch(`/api/fjarr/${code}`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cmd }),
+      });
+      if (!res.ok) throw new Error();
+      navigator.vibrate?.(15);
+    } catch {
+      setError(true);
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (lost) return (
@@ -56,6 +61,7 @@ export default function RemoteControl({ code }: { code: string }) {
         <span className="kicker">Fjärrkontroll · kod {code}</span>
         <h1>{state?.name ?? "Ansluter…"}</h1>
       </header>
+      {error && <p className="msg" role="alert">Kunde inte skicka kommandot. Försök igen.</p>}
       {state && <>
         <p className="remote-step"><b>Steg {state.k + 1}/{state.n}</b>{state.line ? ` · ${state.line}` : ""}<br />{state.text}</p>
         {state.choice ? (

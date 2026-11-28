@@ -4,6 +4,7 @@
    readOnly (a shared link) is play mode only, without saving. */
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { pollWhileVisible } from "@/lib/poll";
 import { onFlush } from "@/lib/unsaved";
 import { dataOf } from "@/lib/schema";
 import dynamic from "next/dynamic";
@@ -12,7 +13,7 @@ import type { Arrow, ArrowKind, Play, PlayData, Pt, Step } from "@/lib/types";
 import { L, W, MIDY, NAMES, ZONE_MIN, ZONE_MAX, zoneOf } from "@/lib/rink";
 import { clamp, dist, fitStroke, heading, pathD, spline } from "@/lib/geom";
 import {
-  arrowCurve, arrowKind, ballPoint, endState, holderRun, lobArc, passOrigin, runHandles, frameAt, movePiece, nearestPiece, placeFromStart, plan, runEndDir, skatedBefore, stepAfter, stillFrame, uid, type Frame,
+  arrowCurve, arrowKind, ballPoint, endState, holderRun, lobArc, passOrigin, runHandles, frameAt, movePiece, nearestPiece, placeFromStart, plan, runEndDir, skatedBefore, stepAfter, stillFrame, uid, type Frame, type Plan,
 } from "@/lib/play";
 import { choicesAt, everyStep, lineName, lineSteps, ownFrom, receiverAt, writeLine, type Line } from "@/lib/lines";
 import { laneStatus, type Lane } from "@/lib/lanes";
@@ -69,7 +70,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
   const [tool, setTool] = useState<Tool>("move");
   const [showThem, setShowThem] = useState(true);
   const [draft, setDraft] = useState<Drag | null>(null);
-  const [anim, setAnim] = useState<{ from: number; u: number } | null>(null);
+  const [anim, setAnim] = useState<{ from: number; u: number; plan: Plan } | null>(null);
   const [save, setSave] = useState<Save>("saved");
   const [portrait, setPortrait] = useState(false);
   const [viewer, setViewer] = useState<string | null>(() =>
@@ -278,12 +279,13 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
     let cur = from;
     let t0 = -1; // set on the first frame
-    let dur = still ? 1 : (plan(st[cur], st[cur + 1]).T * 1000) / speedRef.current;
+    let motion = plan(st[cur], st[cur + 1]);
+    let dur = still ? 1 : (motion.T * 1000) / speedRef.current;
     const tick = (now: number) => {
       if (t0 < 0) t0 = now;
       const u = (now - t0) / dur;
       if (u < 1) {
-        setAnim({ from: cur, u });
+        setAnim({ from: cur, u, plan: motion });
         playRef.current = { raf: requestAnimationFrame(tick) };
         return;
       }
@@ -298,7 +300,8 @@ export default function Editor({ initial, readOnly = false, shared = false, role
       }
       if (all && cur < st.length - 1) {
         t0 = now + 450; // short breath on each step
-        dur = still ? 1 : (plan(st[cur], st[cur + 1]).T * 1000) / speedRef.current;
+        motion = plan(st[cur], st[cur + 1]);
+        dur = still ? 1 : (motion.T * 1000) / speedRef.current;
         const wait = (n: number) => {
           if (n < t0) { playRef.current = { raf: requestAnimationFrame(wait) }; return; }
           tick(n);
@@ -377,9 +380,8 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     ? step.arrows.find(a => a.id === selArrow && a.kind !== "pass") : undefined;
   const handles: Pt[] = draft?.kind === "bend" ? draft.handles : bendArrow ? runHandles(bendArrow, step, next) : [];
   const shownNext = anim ? steps[anim.from + 1] : next;
-  const animFrom = anim ? anim.from : -1;
-  const animPlan = useMemo(() => (animFrom >= 0 && steps[animFrom + 1] ? plan(steps[animFrom], steps[animFrom + 1]) : null), [animFrom, steps]);
-  const frame: Frame = anim && animPlan ? frameAt(animPlan, anim.u * animPlan.T) : stillFrame(step);
+  const screenStep = anim ? anim.from : kk;
+  const frame: Frame = anim ? frameAt(anim.plan, anim.u * anim.plan.T) : stillFrame(step);
 
   // open, risky and closed passes from the ball carrier, when standing still
   const laneList = useMemo(() => {
@@ -400,23 +402,23 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     const { cols, rows, grid } = spaceControl(data.pieces, step.pos);
     const c = document.createElement("canvas");
     c.width = cols; c.height = rows;
-    const g = c.getContext("2d")!;
+    const g = c.getContext("2d");
+    if (!g) return null;
     const img = g.createImageData(cols, rows);
+    let ours = 0;
     for (let i = 0; i < grid.length; i++) {
       const m = grid[i], a = Math.min(1, Math.abs(m) / 1.2);
-      const [r, gg, b] = m > 0 ? [0, 87, 168] : [107, 119, 133];
-      img.data.set([r, gg, b, Math.round(40 + 120 * a)], i * 4);
+      const j = i * 4;
+      if (m > 0) ours++;
+      img.data[j] = m > 0 ? 0 : 107;
+      img.data[j + 1] = m > 0 ? 87 : 119;
+      img.data[j + 2] = m > 0 ? 168 : 133;
+      img.data[j + 3] = Math.round(40 + 120 * a);
     }
     g.putImageData(img, 0, 0);
-    return { href: c.toDataURL(), w: cols * CELL, h: rows * CELL };
+    return { href: c.toDataURL(), w: cols * CELL, h: rows * CELL, ourShare: Math.round(100 * ours / grid.length) };
   }, [space, mode, anim, data.pieces, step.pos]);
-  const ourShare = useMemo(() => {
-    if (!spaceImg) return 0;
-    const { grid } = spaceControl(data.pieces, step.pos);
-    let n = 0;
-    for (const v of grid) if (v > 0) n++;
-    return Math.round((100 * n) / grid.length);
-  }, [spaceImg, data.pieces, step.pos]);
+  const ourShare = spaceImg?.ourShare ?? 0;
 
   /* ---------- pointer → rink coordinates ---------- */
   const toWorld = (e: React.PointerEvent): Pt => {
@@ -470,7 +472,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
     } else if (tool === "pass" || tool === "lob") {
       // a pass is its own phase after the step's runs: from where the ball is when they are done
       const holder = step.ball.holder;
-      const from = ballPoint({ ...stepEnd.ball, holder }, stepEnd.pos);
+      const from = ballPoint(step.ball, stepEnd.pos);
       const holderNear = holder && nearestPiece(visible, stepEnd.pos, p, REACH) === holder;
       if (dist(p, from) < REACH || holderNear) d = { kind: "stroke", arrow: "pass", piece: null, pts: [from], lob: tool === "lob" };
     } else if (tool === "dir") {
@@ -723,31 +725,37 @@ export default function Editor({ initial, readOnly = false, shared = false, role
   // open a remote session, then poll it for commands from the phone
   useEffect(() => {
     if (!present) return;
-    let alive = true, seq = 0, code = "";
-    let timer: ReturnType<typeof setInterval> | undefined;
-    (async () => {
-      const res = await fetch("/api/fjarr", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ playId: initial.id }) });
-      if (!alive || !res.ok) return;
-      code = (await res.json()).code;
+    const controller = new AbortController();
+    let stopPoll: (() => void) | undefined;
+    let seq = 0;
+    void (async () => {
+      const res = await fetch("/api/fjarr", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ playId: initial.id }), signal: controller.signal,
+      });
+      if (!res.ok) return;
+      const { code } = await res.json();
+      if (controller.signal.aborted) return;
       setRemoteCode(code);
-      timer = setInterval(async () => {
-        try {
-          const r = await (await fetch(`/api/fjarr/${code}`, { cache: "no-store" })).json();
-          if (r.seq > seq) {
-            const fresh = seq > 0 || r.seq === 1; // ignore a command left from before we joined
-            seq = r.seq;
-            if (fresh && r.cmd) { const [c, arg] = String(r.cmd).split(":"); cmds.current[c]?.(arg); }
-          }
-        } catch { /* next tick */ }
+      stopPoll = pollWhileVisible(async signal => {
+        const response = await fetch(`/api/fjarr/${code}`, { cache: "no-store", signal });
+        if (!response.ok) return;
+        const r = await response.json();
+        if (signal.aborted || !(r.seq > seq)) return;
+        seq = r.seq;
+        if (r.cmd) {
+          const [command, arg] = String(r.cmd).split(":");
+          cmds.current[command]?.(arg);
+        }
       }, 600);
-    })();
-    return () => { alive = false; if (timer) clearInterval(timer); };
+    })().catch(() => {});
+    return () => { controller.abort(); stopPoll?.(); };
   }, [present, initial.id]);
   // tell the phone what the screen shows
   useEffect(() => {
     if (!present || !remoteCode) return;
     const state: ScreenState = {
-      name, k: anim ? anim.from : kk, n: steps.length, text: shownStep.text, playing,
+      name, k: screenStep, n: steps.length, text: shownStep.text, playing,
       line: variants.length ? lineName(data, line) : "",
       choice: choice ? choice.options.map(o => ({ id: o.line ?? "main", label: o.badge ? (NAMES[o.badge] ?? o.badge) : o.name, badge: o.badge })) : null,
     };
@@ -755,13 +763,25 @@ export default function Editor({ initial, readOnly = false, shared = false, role
       fetch(`/api/fjarr/${remoteCode}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state }) }).catch(() => {});
     }, 150);
     return () => clearTimeout(t);
-  }, [present, remoteCode, name, kk, anim, steps.length, shownStep.text, playing, choice, line, variants.length, data]);
+  }, [present, remoteCode, name, screenStep, steps.length, shownStep.text, playing, choice, line, variants.length, data]);
 
   /* ---------- render ---------- */
   const lbl = portrait ? "rotate(90)" : undefined;
   const holder = shownStep.ball.holder ? pieceById[shownStep.ball.holder] : null;
   const saveText = { saved: "Sparat", saving: "Sparar…", dirty: "Ändrat", error: "Kunde inte spara", conflict: "Inte sparat" }[save];
   const hideArrows = quizAsking; // the arrows would give the answer away
+  const trails = useMemo(() => {
+    if (hideArrows) return null;
+    return shownStep.arrows.map(a => {
+      if (a.piece && !showThem && pieceById[a.piece]?.side === "them") return null;
+      const pts = arrowCurve(a, shownStep, shownNext);
+      const kind = arrowKind(a, shownStep);
+      const d = pathD(pts);
+      const mine = !roleId || a.piece === roleId || (a.kind === "pass" && (shownStep.ball.holder === roleId || shownNext?.ball.holder === roleId));
+      return <path key={a.id} d={d} className={"arrow arrow-" + kind + (a.lob ? " lob" : "") + (mine ? "" : " other")} markerEnd={`url(#ah-${kind})`} />;
+    });
+  }, [hideArrows, shownStep, shownNext, showThem, pieceById, roleId]);
+
   let hint: React.ReactNode = present
     ? "Styr med → / mellanslag, ← tillbaka, A spelar allt, F helskärm. Eller med mobilen."
     : mode === "play"
@@ -892,14 +912,7 @@ export default function Editor({ initial, readOnly = false, shared = false, role
 
             {!hideArrows && (
               <g className={anim ? "trails playing" : "trails"}>
-                {shownStep.arrows.map(a => {
-                  if (a.piece && !showThem && pieceById[a.piece]?.side === "them") return null;
-                  const pts = arrowCurve(a, shownStep, shownNext);
-                  const kind = arrowKind(a, shownStep);
-                  const d = pathD(pts);
-                  const mine = !roleId || a.piece === roleId || (a.kind === "pass" && (shownStep.ball.holder === roleId || shownNext?.ball.holder === roleId));
-                  return <path key={a.id} d={d} className={"arrow arrow-" + kind + (a.lob ? " lob" : "") + (mine ? "" : " other")} markerEnd={`url(#ah-${kind})`} />;
-                })}
+                {trails}
                 {draft?.kind === "stroke" && draft.pts.length > 1 && (() => {
                   // show the raw finger trace faintly and what it snaps to
                   const way = draft.arrow === "pass" ? [draft.pts[0], draft.pts[draft.pts.length - 1]] : fitStroke(draft.pts);
