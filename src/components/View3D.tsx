@@ -454,18 +454,21 @@ export default function View3D({ pieces, step, steps, speed = 1, viewer, k, coun
       last = now;
       advance(dt);
       if (!still) {
-        // skate in place; faster strides while actually moving
         for (const p of players) {
-          if (p.sk.root.visible) { p.t += dt * (p.moved ? 1.9 : 1); p.sk.update(p.t); }
+          if (p.moved && p.sk.root.visible) {
+            p.t += dt * 1.9;
+            p.sk.update(p.t);
+          }
           p.moved = false;
         }
-        dirty = true;
       }
       if (!dirty) return;
       place(dt);
       if (hudDirty && now - lastHud >= 100) { hudDirty = false; lastHud = now; pushHud(); } // ≤ 10 Hz
       renderer.render(scene, camera);
-      dirty = false;
+      // Finish easing the broadcast camera after playback stops.
+      dirty = (camRef.current === "stand" || camRef.current === "goal") &&
+        Math.abs(poseRef.current.ball[0] - fx) + Math.abs(poseRef.current.ball[1] - fz) > 0.01;
     };
     // a pending hud update still has to land when nothing else moves
     const hudTimer = setInterval(() => { if (hudDirty) dirty = true; }, 120);

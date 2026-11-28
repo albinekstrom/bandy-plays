@@ -8,19 +8,25 @@ export const CELL = 1.5;     // metres per cell
 const SPEED = 7;             // m/s
 const TURN = 0.45;           // extra seconds to turn fully around
 
-function arrival(p: Pos, x: number, y: number) {
-  const dx = x - p.x, dy = y - p.y, d = Math.hypot(dx, dy);
+function prepare(p: Pos) {
+  const a = p.dir * Math.PI / 180;
+  return { x: p.x, y: p.y, cos: Math.cos(a), sin: Math.sin(a) };
+}
+
+function arrival(p: ReturnType<typeof prepare>, x: number, y: number) {
+  const dx = x - p.x, dy = y - p.y;
+  const squared = dx * dx + dy * dy;
+  const d = Number.isFinite(squared) ? Math.sqrt(squared) : Math.hypot(dx, dy);
   if (d < 0.5) return 0;
-  const a = (p.dir * Math.PI) / 180;
-  const cos = (dx * Math.cos(a) + dy * Math.sin(a)) / d; // 1 = straight ahead
+  const cos = (dx * p.cos + dy * p.sin) / d; // 1 = straight ahead
   return d / SPEED + ((1 - cos) / 2) * TURN;
 }
 
 /** Grid of margins in seconds: > 0 = we arrive first, < 0 = they do. Row-major, cols × rows. */
 export function spaceControl(pieces: Piece[], pos: Record<string, Pos>) {
   const cols = Math.ceil(L / CELL), rows = Math.ceil(W / CELL);
-  const us = pieces.filter(p => p.side === "us" && pos[p.id]).map(p => pos[p.id]);
-  const them = pieces.filter(p => p.side === "them" && pos[p.id]).map(p => pos[p.id]);
+  const us = pieces.filter(p => p.side === "us" && pos[p.id]).map(p => prepare(pos[p.id]));
+  const them = pieces.filter(p => p.side === "them" && pos[p.id]).map(p => prepare(pos[p.id]));
   const grid = new Float32Array(cols * rows);
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {

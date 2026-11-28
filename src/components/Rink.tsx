@@ -1,7 +1,8 @@
+import { memo } from "react";
 import { L, W, MIDY, ZONE, zoneLabel } from "@/lib/rink";
 
 /* Rink markings, in metres. Same drawing as the Uppspel page. */
-export default function Rink({ portrait, zone = ZONE }: { portrait: boolean; zone?: number }) {
+export default memo(function Rink({ portrait, zone = ZONE }: { portrait: boolean; zone?: number }) {
   const arcs = [
     `M0 ${MIDY - 17} A17 17 0 0 1 0 ${MIDY + 17}`,
     `M${L} ${MIDY - 17} A17 17 0 0 0 ${L} ${MIDY + 17}`,
@@ -27,4 +28,4 @@ export default function Rink({ portrait, zone = ZONE }: { portrait: boolean; zon
       {[12, L - 12].map(x => <circle key={x} className="mk-fill" cx={x} cy={MIDY} r={0.3} />)}
     </g>
   );
-}
+});

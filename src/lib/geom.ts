@@ -13,20 +13,31 @@ export function lerpAngle(a: number, b: number, u: number) {
 
 /** Point at fraction u (0–1) of the polyline's length. */
 export function along(pts: Pt[], u: number): Pt {
-  if (pts.length === 1) return pts[0];
-  const seg: number[] = [];
-  let total = 0;
-  for (let i = 1; i < pts.length; i++) { const d = dist(pts[i - 1], pts[i]); seg.push(d); total += d; }
-  if (total === 0) return pts[0];
-  let want = clamp(u, 0, 1) * total;
-  for (let i = 0; i < seg.length; i++) {
-    if (want <= seg[i] || i === seg.length - 1) {
-      const f = seg[i] ? want / seg[i] : 0;
-      return [lerp(pts[i][0], pts[i + 1][0], f), lerp(pts[i][1], pts[i + 1][1], f)];
-    }
-    want -= seg[i];
+  return samplePath(measurePath(pts), u);
+}
+
+export function measurePath(points: Pt[]) {
+  let length = 0;
+  const distances = points.map((point, i) => {
+    if (i > 0) length += dist(points[i - 1], point);
+    return length;
+  });
+  return { points, distances, length };
+}
+
+export function samplePath({ points, distances, length }: ReturnType<typeof measurePath>, u: number): Pt {
+  if (!length || u <= 0) return points[0];
+  if (u >= 1) return points[points.length - 1];
+  const target = u * length;
+  let lo = 1, hi = distances.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (distances[mid] < target) lo = mid + 1;
+    else hi = mid;
   }
-  return pts[pts.length - 1];
+  const start = distances[lo - 1];
+  const f = (target - start) / (distances[lo] - start);
+  return [lerp(points[lo - 1][0], points[lo][0], f), lerp(points[lo - 1][1], points[lo][1], f)];
 }
 
 /** A wavy copy of a polyline, for "driver" (dribble) arrows. */
