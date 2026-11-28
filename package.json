@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "check": "tsc --noEmit && eslint"
+    "check": "tsc --noEmit && eslint",
+    "test": "node --conditions react-server --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.1",
@@ -24,6 +25,7 @@
     "@types/three": "^0.181.0",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   },
   "engines": {
