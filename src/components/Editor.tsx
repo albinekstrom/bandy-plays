@@ -1097,14 +1097,12 @@ export default function Editor({ initial, readOnly = false, shared = false, role
             const pass = s.arrows.find(a => a.kind === "pass");
             return (
               <Fragment key={s.id}>
-                <button type="button" className={i === (anim ? anim.from : kk) ? "cur" : i < kk ? "done" : ""} onClick={() => { stop(); setK(i); }} aria-label={`Steg ${i + 1}`} aria-current={i === kk ? "step" : undefined} disabled={!!quiz}>
+                <button type="button" className={i === (anim ? anim.from : kk) ? "cur" : i < kk ? "done" : ""} onClick={() => { stop(); setK(i); }} aria-label={`Steg ${i + 1}${pass ? `, sedan ${pass.lob ? "lyra" : "passning"}` : ""}`} aria-current={i === kk ? "step" : undefined} disabled={!!quiz}>
                   {i + 1}
                 </button>
-                {/* the pass is an in-between step: a small pink ball between the steps */}
-                {pass && (
-                  <button type="button" className={"pass-dot" + (pass.lob ? " lob" : "")} onClick={() => { stop(); setK(i); }} disabled={!!quiz}
-                    aria-label={`${pass.lob ? "Lyra" : "Passning"} efter steg ${i + 1}`} title={pass.lob ? "Lyra" : "Passning"} />
-                )}
+                {/* the pass is an in-between step: a small pink ball between the steps (a marker only;
+                    the step's own button says it) */}
+                {pass && <span className={"pass-dot" + (pass.lob ? " lob" : "")} aria-hidden="true" title={pass.lob ? "Lyra" : "Passning"} />}
               </Fragment>
             );
           })}

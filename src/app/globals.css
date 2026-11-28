@@ -503,8 +503,8 @@ select.field{appearance:auto}
 .steps-bar .dots button.cur{background:var(--rosa);border-color:var(--rosa);color:#fff}
 .steps-bar .dots button:focus-visible{outline:2px solid #fff;outline-offset:2px}
 /* a pass between two steps: a smaller pink ball (a lob gets a white ring) */
-.steps-bar .dots button.pass-dot{width:16px;height:16px;align-self:center;border:0;border-radius:50%;background:var(--rosa);margin:0 -2px}
-.steps-bar .dots button.pass-dot.lob{box-shadow:0 0 0 2px var(--natt),0 0 0 3px #fff}
+.steps-bar .dots .pass-dot{flex:none;width:16px;height:16px;align-self:center;border-radius:50%;background:var(--rosa);margin:0 -2px}
+.steps-bar .dots .pass-dot.lob{box-shadow:0 0 0 2px var(--natt),0 0 0 3px #fff}
 
 /* wide landscape screens: rink as large as possible, controls in a column on the right, steps along the bottom */
 @media (min-width:820px) and (orientation:landscape){

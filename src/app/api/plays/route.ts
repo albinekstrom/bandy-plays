@@ -18,7 +18,6 @@ export async function POST(req: Request) {
   if (!copyOf) return NextResponse.json(await store().create("Nytt spel", newPlayData()), { status: 201 });
   const src = await store().get(copyOf);
   if (!src) return NextResponse.json({ error: "not found" }, { status: 404 });
-  const play = await store().create(`${src.name} (kopia)`.slice(0, 80), dataOf({ ...src }));
-  if (src.tags?.length) await store().setTags(play.id, src.tags);
+  const play = await store().create(`${src.name} (kopia)`.slice(0, 80), dataOf({ ...src }), src.tags ?? []);
   return NextResponse.json({ id: play.id }, { status: 201 });
 }

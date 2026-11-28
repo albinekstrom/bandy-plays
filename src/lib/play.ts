@@ -70,15 +70,11 @@ export function arrowCurve(a: Arrow, step: Step, next: Step | undefined): Pt[] {
   return spline([from, ...a.pts.slice(1, -1), to]);
 }
 
-/** Where the ball leaves from: the passer's spot when his run is done (passes come after the runs;
-    an older `passAt` is kept in the data but no longer used). */
+/** Where the ball leaves from: in front of the passer at the moment the pass is played,
+    taken from the same movement plan that animates him (so the ball never jumps at release).
+    Without a next step there is no plan yet: from where the ball is now. */
 export function passOrigin(step: Step, next: Step | undefined): Pt {
-  const passer = step.ball.holder;
-  const run = passer && next?.pos[passer] ? moveArrow(step, passer) : undefined;
-  if (!passer || !run) return ballPoint(step.ball, step.pos);
-  const path = arrowCurve(run, step, next);
-  const n = path.length;
-  return carried({ x: path[n - 1][0], y: path[n - 1][1], dir: n > 1 ? heading(path[n - 2], path[n - 1]) : step.pos[passer].dir });
+  return next ? plan(step, next).pass?.path[0] ?? ballPoint(step.ball, step.pos) : ballPoint(step.ball, step.pos);
 }
 
 /** How high (in metres on the board, drawn towards the top) a lob's arc bows: longer lobs bow more. */
@@ -137,6 +133,9 @@ export interface Plan {
   pass: { path: Pt[]; start: number; flight: number; lob: boolean } | null;
 }
 
+/* Passes are their own phase after every run in the step (a deliberate change from the older
+   per-step `passAt`, which let a pass leave during the passer's run; saved plays keep the
+   field, but it no longer affects playback). */
 export function plan(a: Step, b: Step): Plan {
   const movers: Record<string, Mover> = {};
   let T = 0.8;
@@ -153,11 +152,14 @@ export function plan(a: Step, b: Step): Plan {
   let pass: Plan["pass"] = null;
   const arrow = a.arrows.find(r => r.kind === "pass");
   if (arrow) {
-    const path = curvePts(passOrigin(a, b), ballPoint(b.ball, b.pos), null);
+    // the pass is its own phase: it leaves once everyone has skated, from in front of the passer
+    // wherever his movement (drawn run or not) has taken him by then
+    const start = Math.max(0, ...Object.values(movers).map(m => m.dur));
+    const passer = a.ball.holder;
+    const from = passer && movers[passer] ? carried(moverAt(movers[passer], start)) : ballPoint(a.ball, a.pos);
+    const path = curvePts(from, ballPoint(b.ball, b.pos), null);
     const lob = !!arrow.lob;
     const flight = Math.max(0.25, polyLength(path) / (lob ? LOB_SPEED : BALL_SPEED));
-    // the pass is its own phase: it leaves once everyone has skated
-    const start = Math.max(0, ...Object.values(movers).map(m => m.dur));
     pass = { path, start, flight, lob };
     T = Math.max(T, start + flight + 0.2);
   }
