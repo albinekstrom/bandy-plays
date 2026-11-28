@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { foreignOrigin } from "@/lib/origin";
 import { loggedIn, isAdmin } from "@/lib/auth";
 import { store } from "@/lib/store";
 import { dataOf, parsePlayData, upgrade } from "@/lib/schema";
@@ -13,6 +14,8 @@ export async function GET(_req: Request, ctx: RouteContext<"/api/plays/[id]">) {
 }
 
 export async function PUT(req: Request, ctx: RouteContext<"/api/plays/[id]">) {
+  const foreign = foreignOrigin(req);
+  if (foreign) return foreign;
   if (!(await isAdmin())) return forbidden();
   const body = await req.json().catch(() => null) as Record<string, unknown> | null;
   const name = typeof body?.name === "string" ? body.name.trim().slice(0, 80) || "Namnlöst" : null;
@@ -26,7 +29,9 @@ export async function PUT(req: Request, ctx: RouteContext<"/api/plays/[id]">) {
   return play ? NextResponse.json({ updatedAt: play.updatedAt, revision: play.revision ?? 0 }) : NextResponse.json({ error: "not found" }, { status: 404 });
 }
 
-export async function DELETE(_req: Request, ctx: RouteContext<"/api/plays/[id]">) {
+export async function DELETE(req: Request, ctx: RouteContext<"/api/plays/[id]">) {
+  const foreign = foreignOrigin(req);
+  if (foreign) return foreign;
   if (!(await isAdmin())) return forbidden();
   await store().remove((await ctx.params).id);
   return new NextResponse(null, { status: 204 });

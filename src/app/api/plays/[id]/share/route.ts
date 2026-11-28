@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
+import { foreignOrigin } from "@/lib/origin";
 import { randomBytes } from "node:crypto";
 import { isAdmin } from "@/lib/auth";
 import { store } from "@/lib/store";
 
 /* Turn a play's read-only share link on (POST) or off (DELETE). */
-export async function POST(_req: Request, ctx: RouteContext<"/api/plays/[id]/share">) {
+export async function POST(req: Request, ctx: RouteContext<"/api/plays/[id]/share">) {
+  const foreign = foreignOrigin(req);
+  if (foreign) return foreign;
   if (!(await isAdmin())) return NextResponse.json({ error: "forbidden" }, { status: 403 });
   const { id } = await ctx.params;
   const play = await store().get(id);
@@ -14,7 +17,9 @@ export async function POST(_req: Request, ctx: RouteContext<"/api/plays/[id]/sha
   return NextResponse.json({ token });
 }
 
-export async function DELETE(_req: Request, ctx: RouteContext<"/api/plays/[id]/share">) {
+export async function DELETE(req: Request, ctx: RouteContext<"/api/plays/[id]/share">) {
+  const foreign = foreignOrigin(req);
+  if (foreign) return foreign;
   if (!(await isAdmin())) return NextResponse.json({ error: "forbidden" }, { status: 403 });
   await store().share((await ctx.params).id, null);
   return new NextResponse(null, { status: 204 });
